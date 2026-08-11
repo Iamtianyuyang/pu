@@ -21,12 +21,12 @@ public static class Transcoder
         CancellationToken ct = default)
     {
         var result = await RunFfmpegAsync(input, plan.EffectiveInputArgs, plan.OutputArgs,
-            outputPath, totalDurationUs, progress, ct);
+            outputPath, plan.OutputExtension, totalDurationUs, progress, ct);
         if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0)
         {
             // 硬件解码失败（驱动/格式不支持）→ 纯软件解码重试一次
             result = await RunFfmpegAsync(input, [], plan.OutputArgs,
-                outputPath, totalDurationUs, progress, ct);
+                outputPath, plan.OutputExtension, totalDurationUs, progress, ct);
         }
 
         if (result.ExitCode != 0)
@@ -41,13 +41,16 @@ public static class Transcoder
 
     private static async Task<ProcessResult> RunFfmpegAsync(
         string input, string[] inputArgs, string[] outputArgs, string outputPath,
-        long totalDurationUs, IProgress<TranscodeProgress>? progress, CancellationToken ct)
+        string outputExtension, long totalDurationUs,
+        IProgress<TranscodeProgress>? progress, CancellationToken ct)
     {
         var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-nostats" };
         args.AddRange(inputArgs);
         args.Add("-i");
         args.Add(input);
         args.AddRange(outputArgs);
+        // 显式指定封装格式：产物可能先写 .tmp 临时名，扩展名推断会失败
+        args.AddRange(["-f", MuxerNameFor(outputExtension)]);
         args.AddRange(["-progress", "pipe:1", outputPath]);
 
         double lastReported = -1;
@@ -83,6 +86,13 @@ public static class Transcoder
                 TimeSpan.FromMicroseconds(totalDurationUs)));
         }, cancellationToken: ct);
     }
+
+    /// <summary>产物扩展名 → ffmpeg 封装器名（m4a 也走 mp4 封装器）。</summary>
+    private static string MuxerNameFor(string outputExtension) => outputExtension switch
+    {
+        "mp4" or "m4a" => "mp4",
+        var ext => ext,
+    };
 
     private static void TryDelete(string path)
     {

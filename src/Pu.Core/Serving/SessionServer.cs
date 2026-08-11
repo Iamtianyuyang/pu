@@ -166,13 +166,31 @@ public sealed class SessionServer : IAsyncDisposable
             throw new InvalidOperationException(plan.Explanation);
 
         var passthrough = plan.Kind == PlanKind.ServeOriginal;
-        var artifactDir = passthrough
-            ? Path.GetDirectoryName(sourcePath)!
-            : CacheKey.ArtifactDirFor(sourcePath,
-                policy == TranscodePolicy.ForceGpu && info.Video is not null
-                    ? $"gpu:{catalog!.PreferredH264Encoder}" // 与「尽可能不转」时代的 copy 产物隔离
-                    : null);
-        var artifact = passthrough ? sourcePath : Path.Combine(artifactDir, $"out.{plan.OutputExtension}");
+        var variant = policy == TranscodePolicy.ForceGpu && info.Video is not null
+            ? $"gpu:{catalog!.PreferredH264Encoder}" : null;
+
+        // 产物落点：直出用源文件；命中复用直接播；否则就地（.pu\ 子目录）或中央缓存生产
+        string artifact;
+        string artifactDir;
+        ArtifactTarget? target = null;
+        if (passthrough)
+        {
+            artifact = sourcePath;
+            artifactDir = Path.GetDirectoryName(sourcePath)!;
+        }
+        else if (ArtifactLocator.TryGetReusable(sourcePath, plan.OutputExtension, variant) is { } hit)
+        {
+            artifact = hit;
+            artifactDir = Path.GetDirectoryName(hit)!;
+            if (!ArtifactLocator.IsSidecarPath(hit))
+                CacheManager.Touch(artifactDir); // 中央缓存命中：刷新 LRU 标记
+        }
+        else
+        {
+            target = ArtifactLocator.ForProduction(sourcePath, plan.OutputExtension, variant);
+            artifact = target.ArtifactPath;
+            artifactDir = target.WorkDir;
+        }
         var contentType = passthrough
             ? ContentTypes.ForMedia(sourcePath)
             : info.Video is null ? "audio/mp4" : "video/mp4";
@@ -190,16 +208,15 @@ public sealed class SessionServer : IAsyncDisposable
         _jobs[job.Token] = job;
         LatestUrl = UrlFor(job);
 
-        if (passthrough || File.Exists(artifact))
+        if (target is null)
         {
-            // 零处理 / 缓存命中：抽完字幕直接可播；更新 LRU 标记
-            CacheManager.Touch(artifactDir);
+            // 零处理 / 复用命中：抽完字幕直接可播
             var subs = await SubtitleExtractor.ExtractAsync(sourcePath, info, artifactDir, ct);
             job.SetServing(subs);
         }
         else
         {
-            _ = RunJobAsync(job, sourcePath, info, plan, artifact, artifactDir, ct);
+            _ = RunJobAsync(job, sourcePath, info, plan, target, variant, ct);
         }
         CacheManager.MaybeEvict();
         return job;
@@ -252,16 +269,27 @@ public sealed class SessionServer : IAsyncDisposable
 
     private async Task RunJobAsync(
         MediaJob job, string sourcePath, MediaInfo info, TranscodePlan plan,
-        string artifact, string artifactDir, CancellationToken ct)
+        ArtifactTarget target, string? variant, CancellationToken ct)
     {
         try
         {
-            Directory.CreateDirectory(artifactDir);
+            Directory.CreateDirectory(target.WorkDir);
             var progress = new Progress<TranscodeProgress>(p => job.UpdateProgress(p.Fraction));
-            var transcode = Transcoder.TranscodeAsync(sourcePath, plan, artifact, info.DurationUs, progress, ct);
-            var subs = SubtitleExtractor.ExtractAsync(sourcePath, info, artifactDir, ct);
+            // 先写临时文件，成功才改名成正式产物——就地模式下源目录不会看到半截 mp4
+            var transcode = Transcoder.TranscodeAsync(sourcePath, plan, target.TempPath, info.DurationUs, progress, ct);
+            var subs = SubtitleExtractor.ExtractAsync(sourcePath, info, target.WorkDir, ct);
             await Task.WhenAll(transcode, subs);
-            CacheManager.Touch(artifactDir); // 新产物入缓存，更新 LRU 标记
+            if (!string.Equals(target.TempPath, target.ArtifactPath, StringComparison.OrdinalIgnoreCase))
+                File.Move(target.TempPath, target.ArtifactPath, overwrite: true);
+            if (target.Sidecar)
+            {
+                ArtifactLocator.WriteManifest(target.ArtifactPath, sourcePath, variant);
+                ArtifactLocator.Register(target.ArtifactPath);
+            }
+            else
+            {
+                CacheManager.Touch(target.WorkDir); // 中央缓存新产物：更新 LRU 标记
+            }
             job.SetServing(await subs);
         }
         catch (OperationCanceledException)

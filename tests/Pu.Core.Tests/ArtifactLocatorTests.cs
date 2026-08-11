@@ -1,0 +1,135 @@
+using Pu.Core.Cache;
+using Xunit;
+
+namespace Pu.Core.Tests;
+
+/// <summary>产物落点：就地（.pu\）优先、清单校验复用、不可写回退中央缓存、--clean 登记清除。</summary>
+public class ArtifactLocatorTests
+{
+    [Fact]
+    public void 无产物时_复用为Null()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1, 2, 3]);
+        Assert.Null(ArtifactLocator.TryGetReusable(src, "mp4", null));
+    }
+
+    [Fact]
+    public void 就地生产_清单匹配后可复用()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1, 2, 3]);
+
+        var target = ArtifactLocator.ForProduction(src, "mp4", null);
+        Assert.True(target.Sidecar);
+        Assert.Equal(Path.Combine(dir.Path, ".pu"), target.WorkDir);
+        Assert.EndsWith("movie.mkv.mp4", target.ArtifactPath);
+        Assert.True(ArtifactLocator.IsSidecarPath(target.ArtifactPath));
+
+        // 模拟生产完成：临时文件 → 正式产物 + 清单
+        File.Move(WriteAllTextRet(target.TempPath), target.ArtifactPath);
+        ArtifactLocator.WriteManifest(target.ArtifactPath, src, null);
+
+        Assert.Equal(target.ArtifactPath, ArtifactLocator.TryGetReusable(src, "mp4", null));
+    }
+
+    [Fact]
+    public void 源文件变化_清单失配_不复用()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1, 2, 3]);
+
+        var target = ArtifactLocator.ForProduction(src, "mp4", null);
+        File.WriteAllText(target.ArtifactPath, "out");
+        ArtifactLocator.WriteManifest(target.ArtifactPath, src, null);
+        Assert.NotNull(ArtifactLocator.TryGetReusable(src, "mp4", null));
+
+        File.AppendAllText(src, "more-bytes");
+        Assert.Null(ArtifactLocator.TryGetReusable(src, "mp4", null));
+    }
+
+    [Fact]
+    public void 策略变体不一致_不复用()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1]);
+
+        var artifact = Path.Combine(dir.Path, ".pu", "movie.mkv.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(artifact)!);
+        File.WriteAllText(artifact, "out");
+        ArtifactLocator.WriteManifest(artifact, src, "gpu:h264_nvenc");
+
+        Assert.Null(ArtifactLocator.TryGetReusable(src, "mp4", null)); // auto ≠ gpu
+        Assert.Equal(artifact, ArtifactLocator.TryGetReusable(src, "mp4", "gpu:h264_nvenc"));
+    }
+
+    [Fact]
+    public void 源目录不可写_回退中央缓存()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1]);
+
+        ArtifactLocator.WritableOverride = _ => false;
+        try
+        {
+            ArtifactLocator.ClearProbeCache();
+            var target = ArtifactLocator.ForProduction(src, "mp4", "gpu:x");
+            Assert.False(target.Sidecar);
+            Assert.Contains(CacheManager.RootDir, target.WorkDir);
+            // 回退路径与同 variant 的中央缓存一致
+            Assert.Equal(CacheKey.ArtifactDirFor(src, "gpu:x"), target.WorkDir);
+        }
+        finally
+        {
+            ArtifactLocator.WritableOverride = null;
+            ArtifactLocator.ClearProbeCache();
+        }
+    }
+
+    [Fact]
+    public void CleanRegistered_删除产物清单与空目录()
+    {
+        using var dir = new TempDir();
+        // 登记表单独放到一个隔离的 PU_CONFIG_DIR，避免动真配置
+        var old = Environment.GetEnvironmentVariable("PU_CONFIG_DIR");
+        Environment.SetEnvironmentVariable("PU_CONFIG_DIR", dir.Path);
+        try
+        {
+            var mediaDir = Path.Combine(dir.Path, "videos");
+            var artifact = Path.Combine(mediaDir, ".pu", "a.mkv.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(artifact)!);
+            File.WriteAllText(artifact, "12345");
+            File.WriteAllText(artifact + ".json", "{}");
+
+            ArtifactLocator.Register(artifact);
+            var freed = ArtifactLocator.CleanRegistered();
+
+            Assert.Equal(5, freed);
+            Assert.False(File.Exists(artifact));
+            Assert.False(File.Exists(artifact + ".json"));
+            Assert.False(Directory.Exists(Path.GetDirectoryName(artifact))); // 空 .pu 一并删
+            Assert.True(Directory.Exists(mediaDir));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CONFIG_DIR", old);
+        }
+    }
+
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = TestEnv.NewTestDir();
+        public void Dispose() { try { Directory.Delete(Path, recursive: true); } catch { } }
+    }
+
+    private static string WriteAllTextRet(string path)
+    {
+        File.WriteAllText(path, "out");
+        return path;
+    }
+}

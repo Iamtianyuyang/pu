@@ -365,7 +365,9 @@ public static class Program
     {
         var (entries, bytes) = CacheManager.Stats();
         var freed = CacheManager.Clean();
-        Console.WriteLine($"已清空缓存：{entries} 项 / {FormatSize(bytes)}（释放 {FormatSize(freed)}）。");
+        var freedSidecar = ArtifactLocator.CleanRegistered();
+        Console.WriteLine($"已清空缓存：中央缓存 {entries} 项 / {FormatSize(bytes)}"
+            + $"，就地产物 {FormatSize(freedSidecar)}（共释放 {FormatSize(freed + freedSidecar)}）。");
     }
 
     private static string FormatSize(long bytes) => bytes switch
