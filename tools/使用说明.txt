@@ -1,31 +1,32 @@
-pu~ —— 右键视频，手机/平板扫码就能看
+噗~噗噗~~噗噗噗噗~~~~ —— 右键视频，手机/平板扫码就能看
 ========================================
 
 一、安装
-  1. 把 pu.exe 放到任意位置（建议 D:\pu\）
-  2. 双击运行一次，或命令行执行：
-       pu.exe --install
-     会自动安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单（无需管理员）
+  · 安装版：双击 pu-setup.exe，一路下一步即可（免管理员）
+  · 便携版：解压 zip 到任意位置直接用；
+    想要右键菜单就运行一次：pu.exe --install
 
-二、需要 ffmpeg（转码引擎，不捆绑）
-  1. 下载：https://www.gyan.dev/ffmpeg/builds/  （选 ffmpeg-release-essentials.zip）
-  2. 解压到 D:\ffmpeg，然后把 D:\ffmpeg\bin 加入系统 PATH（或告诉我路径）
-     或者把下面内容保存为 %LOCALAPPDATA%\Pu\config.json：
-       { "ffmpeg": "D:\\ffmpeg\\bin\\ffmpeg.exe" }
-  3. 命令行执行 pu.exe --version 不再提示缺 ffmpeg 即就绪
+二、ffmpeg
+  · 全自带版（文件名带 full）：已内置 ffmpeg，本步直接跳过
+  · 标准版需要装一次：
+    1. 下载：https://www.gyan.dev/ffmpeg/builds/  （选 ffmpeg-release-essentials.zip）
+    2. 解压后把 bin 目录加入系统 PATH；
+       或把下面内容保存为 %LOCALAPPDATA%\Pu\config.json：
+         { "ffmpeg": "D:\\ffmpeg\\bin\\ffmpeg.exe" }
+    3. pu.exe --version 不再提示缺 ffmpeg 即就绪
 
 三、使用
-  · 右键任意视频/文件夹 → pu~ → 浏览器自动弹出状态页
-  · 手机/平板连同一 Wi-Fi，扫状态页上的二维码即看
-  · 转码中会显示进度，转完自动起播；内嵌字幕可点按钮切换
-  · 同一文件第二次打开是秒开（有缓存）
+  · 右键任意视频/文件夹 → 噗~噗噗~~噗噗噗噗~~~~
+  · 桌面窗口会出现二维码；手机/平板连同一 Wi-Fi 扫码即看
+  · 需要准备时会显示进度，准备好自动起播；内嵌字幕可点按钮切换
+  · 同一文件第二次打开秒开（产物存在源文件旁的 .pu 目录）
 
 四、其他命令
   pu.exe --uninstall   卸载（移除右键菜单并删除安装文件）
-  pu.exe --clean       清空转码缓存
+  pu.exe --clean       清空缓存与就地产物
   pu.exe --help        帮助
 
 五、说明
   · 只服务局域网，不联网、无账号
-  · 缓存默认 20 GB 上限，自动淘汰
-  · 空闲 30 分钟自动退出；托盘图标可随时停止
+  · 空闲自动退出；托盘图标可随时停止
+  · 就地产物可手动删除（源文件旁的 .pu 文件夹），--clean 也能统一清

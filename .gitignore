@@ -17,3 +17,4 @@ tmp/
 
 # 工具生成
 .serena/
+tools/vendor/

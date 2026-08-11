@@ -22,6 +22,8 @@ pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹�
 
 **安装版 `publish/pu-setup.exe`**（推荐）：双击 → 下一步 → 完成。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
 
+**全自带版 `pu-setup-full.exe` / `pu-windows-x64-full.zip`**：附带 ffmpeg/ffprobe（gyan.dev release-essentials，发布时下载一次缓存进 `tools/vendor\`，不进 git），装到 `{app}\ffmpeg\`，用户零依赖。
+
 **便携版 `publish/pu-windows-x64.zip`**：解压即用，不写注册表；需要右键菜单时手动执行：
 
 ```
@@ -32,7 +34,7 @@ pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 > 两个版本共用 `%LOCALAPPDATA%\Pu` 的配置与缓存；不要同时装两份（卸载任一份会清掉共享数据）。
 
 - **.NET 10 自包含单文件 exe**，目标电脑无需预装 .NET
-- 需要 ffmpeg（不捆绑，GPL 分发义务）：
+- ffmpeg 查找顺序：config.json → **exe 旁的 `ffmpeg\` 子目录（全自带版）** → PATH：
   1. 下载 https://www.gyan.dev/ffmpeg/builds/ （ffmpeg-release-essentials.zip）
   2. bin 目录加入 PATH，或写 %LOCALAPPDATA%\Pu\config.json 的 `{"ffmpeg":"..."}`
   3. 缺失时程序会提示引导
@@ -81,7 +83,7 @@ pu --help / --version
 ## 打包
 
 ```powershell
-powershell -File tools/publish.ps1   # 发布单文件 exe + 便携 zip；装了 Inno Setup 时同时产出安装包 pu-setup.exe
+powershell -File tools/publish.ps1   # 发布单文件 exe + 便携 zip + 全自带 zip；装了 Inno Setup 时同时产出 pu-setup.exe / pu-setup-full.exe
 ```
 
 ## 测试

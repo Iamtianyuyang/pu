@@ -12,7 +12,11 @@ DefaultDirName={localappdata}\Programs\pu~
 DefaultGroupName={#AppBrand}
 PrivilegesRequired=lowest
 OutputDir=..\publish
+#ifdef Full
+OutputBaseFilename=pu-setup-full
+#else
 OutputBaseFilename=pu-setup
+#endif
 SetupIconFile=..\assets\pu.ico
 Compression=lzma2/ultra64
 WizardStyle=modern
@@ -25,6 +29,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Files]
 Source: "..\publish\pu\pu.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\publish\pu\使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion
+#ifdef Full
+Source: "vendor\ffmpeg\ffmpeg.exe"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion
+Source: "vendor\ffmpeg\ffprobe.exe"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\{#AppBrand}"; Filename: "{app}\pu.exe"

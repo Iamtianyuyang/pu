@@ -4,6 +4,7 @@ namespace Pu.Core.Common;
 
 /// <summary>
 /// ffmpeg / ffprobe 定位（方案.md 第二节：PATH → 配置文件 → 引导下载）。
+/// 顺序：配置文件 → exe 旁的 ffmpeg\ 子目录（全自带版）→ PATH。
 /// 配置文件：%LOCALAPPDATA%\Pu\config.json  { "ffmpeg": "D:\\ffmpeg\\bin\\ffmpeg.exe" }
 /// （目录路径也行，会自动补 ffmpeg.exe；测试可用 PU_CONFIG_DIR 覆盖）
 /// </summary>
@@ -20,8 +21,15 @@ public static class FfmpegLocator
         "未找到 ffmpeg/ffprobe。下载：https://www.gyan.dev/ffmpeg/builds/ 解压后把 bin 目录加入 PATH，"
         + "或在 " + ConfigPath + " 中配置 {\"ffmpeg\":\"D:\\ffmpeg\\bin\\ffmpeg.exe\"}。";
 
-    public static string Exe => ResolveFromConfig() ?? FindOnPath("ffmpeg.exe") ?? FindOnPath("ffmpeg")
+    public static string Exe => ResolveFromConfig() ?? FindBundled() ?? FindOnPath("ffmpeg.exe") ?? FindOnPath("ffmpeg")
         ?? throw new InvalidOperationException(MissingGuidance);
+
+    /// <summary>全自带版：pu.exe 旁的 ffmpeg\ 子目录。</summary>
+    private static string? FindBundled()
+    {
+        var p = Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe");
+        return File.Exists(p) ? p : null;
+    }
 
     public static string ProbeExe
     {
