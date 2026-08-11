@@ -3,117 +3,189 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0e1319">
+<meta name="theme-color" content="#0a0e14">
 <title>pu~</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%230e1319'/%3E%3Cpath d='M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12' fill='none' stroke='%2363e6be' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24.5' cy='9.5' r='1.7' fill='%2363e6be'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%230a0e14'/%3E%3Cpath d='M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12' fill='none' stroke='%235eead4' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24.5' cy='9.5' r='1.7' fill='%235eead4'/%3E%3C/svg%3E">
 <style>
 :root{
-  --bg:#0e1319; --panel:#151c24; --panel2:#1b2430; --line:#26303c;
-  --text:#e9eef4; --dim:#93a1b0; --mint:#63e6be; --mint-dim:#2fae8c;
-  --red:#ff7a7a; --amber:#f0b429;
+  --bg:#0a0e14;
+  --surface:#11161f;
+  --surface-2:#171e29;
+  --line:#212c3b;
+  --line-strong:#2e3c50;
+  --text:#e8eef6;
+  --text-2:#9fb0c3;
+  --text-3:#7c8ca0;
+  --mint:#5eead4;
+  --mint-ink:#0c2b23;
+  --amber:#f5b83d;
+  --red:#f87171;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
-  background:radial-gradient(1100px 460px at 85% -10%, rgba(99,230,190,.07), transparent 60%), var(--bg);
+  background:
+    radial-gradient(900px 380px at 85% -8%, rgba(94,234,212,.05), transparent 60%),
+    var(--bg);
   color:var(--text);
-  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  padding:max(20px,env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
-  max-width:580px;margin:0 auto;
-  display:flex;flex-direction:column;gap:16px;
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:max(22px,env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom));
+  max-width:520px;margin:0 auto;
+  display:flex;flex-direction:column;gap:14px;
 }
-header{display:flex;align-items:center;gap:10px}
-.logo{width:30px;height:30px;flex:none}
-h1{font-size:18px;font-weight:700;letter-spacing:.5px}
-.pill{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);
-  border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--panel)}
-.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
-.pill.busy .dot{background:var(--amber);animation:pulse 1.2s infinite}
+@media (min-width:600px){ body{ padding-top:48px } }
+
+/* ── header ── */
+header{display:flex;align-items:center;gap:11px}
+.logo{width:32px;height:32px;flex:none;filter:drop-shadow(0 2px 10px rgba(94,234,212,.25))}
+h1{font-size:17px;font-weight:700;letter-spacing:.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pill{margin-left:auto;flex:none;display:flex;align-items:center;gap:7px;
+  font-size:12.5px;color:var(--text-2);border:1px solid var(--line);
+  border-radius:999px;padding:4px 12px;background:var(--surface)}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);transition:background .25s}
+.pill.busy .dot{background:var(--amber);animation:blink 1.1s ease-in-out infinite}
+.pill.ok{color:var(--mint);border-color:rgba(94,234,212,.35)}
 .pill.ok .dot{background:var(--mint)}
+.pill.bad{color:var(--red);border-color:rgba(248,113,113,.35)}
 .pill.bad .dot{background:var(--red)}
-@keyframes pulse{50%{opacity:.3}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
-#qrCard{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
-#qr{width:204px;height:204px;border-radius:10px;background:#fff;padding:10px;image-rendering:pixelated}
-.url{font-size:12px;color:var(--dim);word-break:break-all;user-select:all}
-.hint{font-size:12px;color:var(--dim)}
-#planText{font-size:13px;color:var(--dim)}
-.bar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;margin:14px 0 10px}
-#barFill{height:100%;width:0%;border-radius:99px;
-  background:linear-gradient(90deg,var(--mint-dim),var(--mint));transition:width .4s ease}
-#pct{font-size:30px;font-weight:800;text-align:center;font-variant-numeric:tabular-nums}
-.playerWrap{position:relative}
-video{width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;display:block;outline:none}
-.playOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(5,8,11,.45);border-radius:12px}
-#playBtn{border:0;cursor:pointer;display:flex;align-items:center;gap:8px;
-  background:var(--mint);color:#06231b;font:inherit;font-weight:700;
-  padding:12px 26px;border-radius:999px;box-shadow:0 8px 30px rgba(99,230,190,.25)}
-#subsRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-#subsRow button{border:1px solid var(--line);background:var(--panel2);color:var(--dim);
-  border-radius:999px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit}
-#subsRow button.on{color:#06231b;background:var(--mint);border-color:var(--mint);font-weight:600}
-#errorCard{color:var(--red);font-size:14px}
+@keyframes blink{50%{opacity:.25}}
+
+/* ── cards ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:22px 20px}
 .hidden{display:none!important}
+.stage{animation:fadein .25s ease-out}
+@keyframes fadein{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){
+  .pill.busy .dot{animation:none}
+  .stage{animation:none}
+}
+
+/* ── QR ── */
+#qrCard{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.qr-frame{position:relative;background:#fff;border-radius:14px;padding:13px;
+  box-shadow:0 12px 40px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.06)}
+.qr-frame::before,.qr-frame::after{content:"";position:absolute;width:22px;height:22px;border:3px solid var(--mint);border-radius:4px}
+.qr-frame::before{top:7px;left:7px;border-right:0;border-bottom:0}
+.qr-frame::after{bottom:7px;right:7px;border-left:0;border-top:0}
+#qr{width:196px;height:196px;display:block;image-rendering:pixelated;border-radius:6px}
+.qr-hint{font-size:13px;color:var(--text-2)}
+.url{font-size:12px;color:var(--text-3);word-break:break-all;user-select:all;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;max-width:100%}
+#planText{font-size:12.5px;color:var(--text-3)}
+
+/* ── progress ── */
+#pct{font-size:34px;font-weight:800;text-align:center;letter-spacing:-.5px;
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.bar{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:16px 0 10px}
+#barFill{height:100%;width:0%;border-radius:99px;
+  background:linear-gradient(90deg,#2fb89c,var(--mint));
+  box-shadow:0 0 12px rgba(94,234,212,.35);
+  transition:width .35s ease-out}
+.prog-hint{font-size:12.5px;color:var(--text-3);text-align:center}
+
+/* ── player ── */
+#playerCard{padding:14px}
+.playerWrap{position:relative;border-radius:13px;overflow:hidden;background:#000;
+  aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
+video{width:100%;height:100%;display:block;outline:none}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(4,7,10,.5);transition:opacity .25s}
+.overlay.hidden{opacity:0;pointer-events:none}
+#loadingText{font-size:13px;color:var(--text-2);letter-spacing:2px}
+#playBtn{display:flex;align-items:center;justify-content:center;width:64px;height:64px;border:0;cursor:pointer;
+  background:var(--mint);color:var(--mint-ink);border-radius:50%;
+  font-size:22px;box-shadow:0 8px 30px rgba(94,234,212,.3);transition:transform .15s ease-out, box-shadow .2s}
+#playBtn:hover{transform:scale(1.06);box-shadow:0 10px 36px rgba(94,234,212,.42)}
+#playBtn:active{transform:scale(.97)}
+#playBtn:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
+#subsRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+#subsRow button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);
+  border-radius:999px;padding:5px 15px;font-size:13px;cursor:pointer;font-family:inherit;
+  transition:background .15s, color .15s, border-color .15s}
+#subsRow button:hover{border-color:var(--line-strong);color:var(--text)}
+#subsRow button.on{background:var(--mint);border-color:var(--mint);color:var(--mint-ink);font-weight:600}
+#subsRow button:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+
+/* ── error ── */
+#errorCard{display:flex;gap:12px;align-items:flex-start;color:var(--red);
+  border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}
+#errorCard .err-ico{font-size:18px;line-height:1.4}
+#errorCard p{font-size:13.5px;line-height:1.7}
+#errorCard .err-sub{display:block;margin-top:4px;font-size:12px;color:var(--text-3)}
 </style>
 </head>
 <body>
 <header>
-  <svg class="logo" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="8" fill="#151c24"/><path d="M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12" fill="none" stroke="#63e6be" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="9.5" r="1.7" fill="#63e6be"/></svg>
-  <h1>pu~</h1>
+  <svg class="logo" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="8" fill="#11161f"/><path d="M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12" fill="none" stroke="#5eead4" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="9.5" r="1.7" fill="#5eead4"/></svg>
+  <h1 id="title">pu~</h1>
   <span class="pill" id="pill"><span class="dot"></span><span id="pillText">连接中</span></span>
 </header>
 
-<section class="card" id="qrCard">
-  <img id="qr" alt="二维码">
-  <div class="hint">手机 / 平板扫码，同 Wi-Fi 即开即播</div>
+<!-- 扫码入口：转码期间一直可见 -->
+<section class="card stage" id="qrCard">
+  <div class="qr-frame"><img id="qr" alt="二维码"></div>
+  <div class="qr-hint">手机 / 平板扫码，同一 Wi-Fi 即开即播</div>
   <div class="url" id="urlText"></div>
   <div id="planText"></div>
 </section>
 
-<section class="card hidden" id="progressCard">
+<section class="card stage hidden" id="progressCard">
   <div id="pct">0%</div>
   <div class="bar"><div id="barFill"></div></div>
-  <div class="hint" style="text-align:center">转码完成后自动开始播放，稍等</div>
+  <div class="prog-hint" id="progHint">正在准备…</div>
 </section>
 
-<section class="card hidden" id="playerCard">
+<section class="card stage hidden" id="playerCard">
   <div class="playerWrap">
     <video id="v" controls playsinline preload="auto"></video>
-    <div class="playOverlay hidden" id="playOverlay"><button id="playBtn">▶ 播放</button></div>
+    <div class="overlay hidden" id="loadingOverlay"><span id="loadingText">准备播放…</span></div>
+    <div class="overlay hidden" id="playOverlay"><button id="playBtn" aria-label="播放">▶</button></div>
   </div>
   <div id="subsRow"></div>
 </section>
 
-<section class="card hidden" id="errorCard"></section>
+<section class="card stage hidden" id="errorCard">
+  <span class="err-ico">⚠</span>
+  <p id="errorText">处理失败。</p>
+</section>
 
 <script>
 (function(){
   var token = location.pathname.split('/')[2];
-  if (!token) { document.body.innerHTML = '<p>链接无效</p>'; return; }
+  if (!token) { document.body.innerHTML = '<p style="padding:40px;text-align:center">链接无效</p>'; return; }
   var $ = function(id){ return document.getElementById(id); };
-  var qr=$('qr'), pill=$('pill'), pillText=$('pillText'), planText=$('planText'),
+  var title=$('title'), pill=$('pill'), pillText=$('pillText'), planText=$('planText'),
       qrCard=$('qrCard'), progressCard=$('progressCard'), playerCard=$('playerCard'),
-      errorCard=$('errorCard'), pct=$('pct'), barFill=$('barFill'),
-      video=$('v'), subsRow=$('subsRow'), overlay=$('playOverlay'), playBtn=$('playBtn'), urlText=$('urlText');
+      errorCard=$('errorCard'), errorText=$('errorText'),
+      pct=$('pct'), barFill=$('barFill'), progHint=$('progHint'),
+      video=$('v'), subsRow=$('subsRow'),
+      loadingOverlay=$('loadingOverlay'), playOverlay=$('playOverlay'),
+      playBtn=$('playBtn'), urlText=$('urlText');
 
   urlText.textContent = location.href;
   qr.src = '/s/' + token + '/qr.png?u=' + encodeURIComponent(location.href);
 
   var timer = null;
+
   function show(el){ el.classList.remove('hidden'); }
   function hide(el){ el.classList.add('hidden'); }
   function setPill(t, cls){ pillText.textContent = t; pill.className = 'pill' + (cls ? ' ' + cls : ''); }
 
   function render(st){
+    document.body.dataset.state = st.state; // 调试/测试钩子
+    title.textContent = st.title || 'pu~';
     document.title = (st.title || 'pu~') + ' · pu~';
     planText.textContent = st.plan || '';
+
     if (st.state === 'transcoding'){
+      // 二维码与进度并存：先扫码，边等边看进度
       setPill('转码中', 'busy');
-      hide(qrCard); show(progressCard); hide(playerCard); hide(errorCard);
+      show(qrCard); show(progressCard); hide(playerCard); hide(errorCard);
       var p = Math.round((st.progress || 0) * 100);
       barFill.style.width = p + '%';
       pct.textContent = p + '%';
+      progHint.textContent = st.plan || '正在转码…';
       if (!timer) timer = setInterval(tick, 800);
     } else if (st.state === 'serving'){
       setPill('就绪', 'ok');
@@ -122,12 +194,18 @@ video{width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;display:bl
       if (!video.src){
         buildSubs(st.subtitles || []);
         video.src = '/s/' + token + '/media';
-        video.play().catch(function(){ show(overlay); });
+        show(loadingOverlay);
+        video.addEventListener('canplay', function(){ hide(loadingOverlay); }, { once:true });
+        video.addEventListener('error', function(){
+          hide(loadingOverlay);
+          setPill('播放失败', 'bad');
+        });
+        video.play().catch(function(){ show(playOverlay); });
       }
     } else {
       setPill('失败', 'bad');
       hide(qrCard); hide(progressCard); hide(playerCard); show(errorCard);
-      errorCard.textContent = '处理失败：' + (st.error || '未知错误');
+      errorText.textContent = '处理失败：' + (st.error || '未知错误');
       if (timer){ clearInterval(timer); timer = null; }
     }
   }
@@ -157,7 +235,7 @@ video{width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;display:bl
   }
 
   playBtn.addEventListener('click', function(){
-    hide(overlay);
+    hide(playOverlay);
     video.play().catch(function(){});
   });
 
