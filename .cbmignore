@@ -1,0 +1,11 @@
+# 不进知识图谱 —— 否则废弃原型会被当成真实调用链
+tmp/
+
+# 构建产物
+bin/
+obj/
+publish/
+artifacts/
+
+# 二进制资源
+assets/*.ico

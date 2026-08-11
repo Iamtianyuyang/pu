@@ -1,0 +1,16 @@
+# 构建产物
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# 发布输出
+publish/
+artifacts/
+
+# 临时产物（见 CLAUDE.md 一、临时产物一律进 tmp/）
+tmp/
+
+# 运行时
+*.log
