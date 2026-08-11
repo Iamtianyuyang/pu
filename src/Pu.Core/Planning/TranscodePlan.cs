@@ -33,6 +33,14 @@ public sealed record TranscodePlan(
     public string[] EffectiveInputArgs => InputArgs ?? [];
 
     /// <summary>
+    /// 产物格式版本：改封装参数（如 movflags）时 +1，调用方把它编进缓存变体，
+    /// 让旧参数产出的缓存/就地产物自动失效重转。
+    /// v1: Remux 用 empty_moov（Chromium 系 progressive 播放不起，canplay 不触发）
+    /// v2: Remux 统一 default_base_moof（moov 带完整轨道信息，实测 Edge 可播可拖）
+    /// </summary>
+    public const int FormatVersion = 2;
+
+    /// <summary>
     /// 这个文件按矩阵走是否会进入全转码分支（即需要硬件编码器目录）。
     /// 与 Create 的分支条件保持同步；直出/Remux/纯音频返回 false → 调用方可跳过编码器探测。
     /// </summary>
@@ -153,13 +161,11 @@ public sealed record TranscodePlan(
 
     /// <summary>
     /// Remux 产物用分段 MP4（moov 随首分片落盘，免 faststart 二次整文件重写）。
-    /// 但 E-AC-3/AC-3 不能用 empty_moov：muxer 要先解析过音帧才写得出 ec-3/ac-3 描述，
-    /// 否则报 “Cannot write moov atom before EAC3 packets parsed”。
+    /// 不能加 empty_moov：① E-AC-3/AC-3 报错（muxer 要先解析音帧才写得出 ec-3/ac-3 描述）；
+    /// ② Chromium 系对 empty_moov 的 progressive fMP4 不起播（readyState 恒 0）。
     /// </summary>
     private static string MovflagsForRemux(MediaInfo info)
-        => info.Audio is { Codec: "ac3" or "eac3" }
-            ? "frag_keyframe+default_base_moof"
-            : "frag_keyframe+empty_moov+default_base_moof";
+        => "frag_keyframe+default_base_moof";
 
     private static void AddAudio(List<string> args, MediaInfo info, bool audioCopyable)
     {

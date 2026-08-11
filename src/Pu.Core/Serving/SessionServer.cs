@@ -166,8 +166,10 @@ public sealed class SessionServer : IAsyncDisposable
             throw new InvalidOperationException(plan.Explanation);
 
         var passthrough = plan.Kind == PlanKind.ServeOriginal;
+        // 产物变体 = 转码策略 + 产物格式版本（旧参数产出的缓存自动失效重转）
         var variant = policy == TranscodePolicy.ForceGpu && info.Video is not null
-            ? $"gpu:{catalog!.PreferredH264Encoder}" : null;
+            ? $"gpu:{catalog!.PreferredH264Encoder};fmt:{TranscodePlan.FormatVersion}"
+            : $"fmt:{TranscodePlan.FormatVersion}";
 
         // 产物落点：直出用源文件；命中复用直接播；否则就地（.pu\ 子目录）或中央缓存生产
         string artifact;
