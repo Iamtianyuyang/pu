@@ -34,7 +34,7 @@ public class FolderServingTests
         var page = await client.GetAsync($"http://localhost:{server.Port}/f/{folder.Token}");
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         Assert.Contains("text/html", page.Content.Headers.ContentType?.ToString());
-        Assert.Contains("pu~", await page.Content.ReadAsStringAsync());
+        Assert.Contains("噗~噗噗~~噗噗噗噗~~~~~~~~", await page.Content.ReadAsStringAsync());
 
         // 2. 状态 JSON：初始全 new
         var st = await client.GetAsync($"http://localhost:{server.Port}/f/{folder.Token}/status");

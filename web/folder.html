@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f5f7fb">
-<meta name="description" content="pu~ 局域网媒体文件列表">
-<title>pu~</title>
+<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~~~~~ 局域网媒体文件列表">
+<title>噗~噗噗~~噗噗噗噗~~~~~~~~</title>
 <link rel="icon" type="image/png" href="/assets/pu-logo.png">
 <style>
 :root{
@@ -44,6 +44,7 @@ body{
   padding:max(20px,env(safe-area-inset-top)) 18px calc(34px + env(safe-area-inset-bottom));
   max-width:640px;margin:0 auto;
   display:flex;flex-direction:column;gap:14px;
+  min-height:100svh;box-sizing:border-box;
 }
 @media (min-width:600px){ body{ padding-top:48px } }
 ::selection{background:rgba(47,91,181,.18)}
@@ -97,12 +98,19 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
 @keyframes shine{to{background-position:-200% 0}}
 .hint{font-size:13px;color:var(--text-3);text-align:center;padding:46px 0;line-height:1.9}
 .hint strong{display:block;font-size:15px;color:var(--text-2);font-weight:600}
+
+/* ── footer：循环夸词 ── */
+.foot{margin-top:auto;text-align:center;font-size:11px;color:var(--text-3);
+  padding:6px 0 2px;letter-spacing:.3px}
+.foot span{display:inline-block;transition:opacity .32s ease,transform .32s ease}
+.foot span.swap{opacity:0;transform:translateY(4px)}
+@media (prefers-reduced-motion:reduce){.foot span{transition:none}}
 </style>
 </head>
 <body>
 <header>
-  <img class="logo" src="/assets/pu-logo.png" alt="pu~">
-  <h1 id="title">pu~</h1>
+  <img class="logo" src="/assets/pu-logo.png" alt="噗~">
+  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~~~~~</h1>
   <span class="count" id="count"></span>
 </header>
 <div id="list" role="list">
@@ -130,8 +138,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
     return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
 
   function render(st){
-    title.textContent = st.title || 'pu~';
-    document.title = (st.title || 'pu~') + ' · pu~';
+    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~';
+    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~~~~~';
     if (st.files.length === 0){
       list.innerHTML = '<div class="hint"><strong>这个文件夹里没有视频</strong>支持常见视频与音频格式<br>试试右键一个文件夹，或打开别的目录</div>';
       count.textContent = '0 个文件';
@@ -180,6 +188,24 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
   }
   tick();
   setInterval(tick, 2000);
+})();
+</script>
+<footer class="foot"><span id="queen">全世界最可爱的噗噗大王~</span></footer>
+<script>
+(function(){
+  var words = ['全世界最可爱','无敌漂亮','闪闪发光','人见人爱','笑起来超甜','元气满满','聪明伶俐','宇宙第一美少女'];
+  var el = document.getElementById('queen');
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var i = 0;
+  setInterval(function(){
+    i = (i + 1) % words.length;
+    if (reduced) { el.textContent = words[i] + '的噗噗大王~'; return; }
+    el.classList.add('swap');
+    setTimeout(function(){
+      el.textContent = words[i] + '的噗噗大王~';
+      el.classList.remove('swap');
+    }, 320);
+  }, 2800);
 })();
 </script>
 </body>

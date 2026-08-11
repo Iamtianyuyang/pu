@@ -46,6 +46,11 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action? CloseRequested;
     public event Action<int>? FolderFileClicked;
 
+    private static readonly string[] QueenWords =
+    ["全世界最可爱", "无敌漂亮", "闪闪发光", "人见人爱", "笑起来超甜", "元气满满", "聪明伶俐", "宇宙第一美少女"];
+
+    private int _queenIndex;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -57,8 +62,35 @@ public sealed partial class MainWindow : Window, IDisposable
         };
         _feedbackTimer.Tick += (_, _) => ResetActionFeedback();
 
+        // 底部夸词循环：动画开关交给系统设置，禁用时直接换字
+        var queenTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(2800),
+        };
+        queenTimer.Tick += (_, _) => CycleQueen();
+        queenTimer.Start();
+
         Closing += OnWindowClosing;
         ShowIdle();
+    }
+
+    private void CycleQueen()
+    {
+        _queenIndex = (_queenIndex + 1) % QueenWords.Length;
+        var next = QueenWords[_queenIndex] + "的噗噗大王~";
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            QueenText.Text = next;
+            return;
+        }
+        var fadeOut = new DoubleAnimation(0, TimeSpan.FromMilliseconds(160));
+        fadeOut.Completed += (_, _) =>
+        {
+            QueenText.Text = next;
+            QueenText.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(1, TimeSpan.FromMilliseconds(280)));
+        };
+        QueenText.BeginAnimation(OpacityProperty, fadeOut);
     }
 
     /// <summary>在当前 STA 线程启动 WPF 消息循环；窗口由 ShowWindow 显式显示。</summary>

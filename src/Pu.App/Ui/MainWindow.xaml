@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="pu~"
+        Title="噗~噗噗~~噗噗噗噗~~~~~~~~"
         Icon="/pu;component/Assets/pu.ico"
         Width="480"
         Height="650"
@@ -255,7 +255,7 @@
                                FontFamily="Segoe UI Variable Display, Microsoft YaHei UI"
                                FontSize="16"
                                FontWeight="SemiBold"
-                               Text="pu~" />
+                               Text="噗~噗噗~~噗噗噗噗~~~~~~~~" />
                     <Border Margin="14,0,0,0"
                             Padding="10,5"
                             Background="{StaticResource SoftAccentBrush}"
@@ -298,8 +298,13 @@
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Row="1" Margin="30,8,30,28">
-                <Grid x:Name="IdleView">
+            <Grid Grid.Row="1" Margin="30,8,30,22">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid x:Name="IdleView" Grid.Row="0">
                     <Grid.RenderTransform>
                         <TranslateTransform />
                     </Grid.RenderTransform>
@@ -374,7 +379,7 @@
                                                HorizontalAlignment="Center"
                                                FontSize="11"
                                                Foreground="{StaticResource TextBrush}"
-                                               Text="选择 pu~" />
+                                               Text="选择「噗~」" />
                                 </StackPanel>
                             </Border>
                             <Path Grid.Column="3"
@@ -410,7 +415,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid x:Name="JobView" Visibility="Collapsed">
+                <Grid x:Name="JobView" Grid.Row="0" Visibility="Collapsed">
                     <Grid.RenderTransform>
                         <TranslateTransform />
                     </Grid.RenderTransform>
@@ -554,7 +559,7 @@
                     </Border>
                 </Grid>
 
-                <Grid x:Name="BusyView" Visibility="Collapsed">
+                <Grid x:Name="BusyView" Grid.Row="0" Visibility="Collapsed">
                     <Grid.RenderTransform>
                         <TranslateTransform />
                     </Grid.RenderTransform>
@@ -596,7 +601,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid x:Name="FolderView" Visibility="Collapsed">
+                <Grid x:Name="FolderView" Grid.Row="0" Visibility="Collapsed">
                     <Grid.RenderTransform>
                         <TranslateTransform />
                     </Grid.RenderTransform>
@@ -765,6 +770,15 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
+
+                <!-- 底部：循环夸词 -->
+                <TextBlock x:Name="QueenText"
+                           Grid.Row="1"
+                           HorizontalAlignment="Center"
+                           Margin="0,10,0,0"
+                           FontSize="10.5"
+                           Foreground="{StaticResource MutedBrush}"
+                           Text="全世界最可爱的噗噗大王~" />
             </Grid>
         </Grid>
     </Border>

@@ -93,7 +93,7 @@ public sealed class TrayIcon : IDisposable
             uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
             uCallbackMessage = WM_APP,
             hIcon = _hIcon,
-            szTip = "pu~ 视频摆渡",
+            szTip = "噗~噗噗~~噗噗噗噗~~~~~~~~ 视频摆渡",
         };
         Shell_NotifyIcon(NIM_ADD, ref data);
 
@@ -136,7 +136,7 @@ public sealed class TrayIcon : IDisposable
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, MenuOpen, "显示窗口");
         AppendMenu(menu, MF_SEPARATOR, 0, null);
-        AppendMenu(menu, MF_STRING, MenuExit, "停止 pu~");
+        AppendMenu(menu, MF_STRING, MenuExit, "停止 噗~噗噗~~噗噗噗噗~~~~~~~~");
         var cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
             pt.X, pt.Y, 0, hWnd, IntPtr.Zero);
         DestroyMenu(menu);

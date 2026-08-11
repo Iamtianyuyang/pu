@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f5f7fb">
-<meta name="description" content="pu~ 局域网视频播放页">
-<title>pu~</title>
+<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~~~~~ 局域网视频播放页">
+<title>噗~噗噗~~噗噗噗噗~~~~~~~~</title>
 <link rel="icon" type="image/png" href="/assets/pu-logo.png">
 <style>
 :root{
@@ -46,6 +46,7 @@ body{
   padding:max(20px,env(safe-area-inset-top)) 18px calc(34px + env(safe-area-inset-bottom));
   max-width:560px;margin:0 auto;
   display:flex;flex-direction:column;gap:16px;
+  min-height:100svh;box-sizing:border-box;
 }
 @media (min-width:600px){ body{ padding-top:48px } }
 ::selection{background:rgba(47,91,181,.18)}
@@ -145,12 +146,19 @@ video{width:100%;height:100%;display:block;outline:none}
   width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--red-line)}
 #errorCard .err-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
 #errorCard p{font-size:13.5px;line-height:1.7;padding-top:4px}
+
+/* ── footer：循环夸词 ── */
+.foot{margin-top:auto;text-align:center;font-size:11px;color:var(--text-3);
+  padding:6px 0 2px;letter-spacing:.3px}
+.foot span{display:inline-block;transition:opacity .32s ease,transform .32s ease}
+.foot span.swap{opacity:0;transform:translateY(4px)}
+@media (prefers-reduced-motion:reduce){.foot span{transition:none}}
 </style>
 </head>
 <body>
 <header>
-  <img class="logo" src="/assets/pu-logo.png" alt="pu~">
-  <h1 id="title">pu~</h1>
+  <img class="logo" src="/assets/pu-logo.png" alt="噗~">
+  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~~~~~</h1>
   <span class="pill" id="pill" aria-live="polite"><span class="dot"></span><span id="pillText">连接中</span></span>
 </header>
 
@@ -210,8 +218,8 @@ video{width:100%;height:100%;display:block;outline:none}
 
   function render(st){
     document.body.dataset.state = st.state; // 调试/测试钩子
-    title.textContent = st.title || 'pu~';
-    document.title = (st.title || 'pu~') + ' · pu~';
+    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~';
+    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~~~~~';
     planText.textContent = st.plan || '';
 
     if (st.state === 'transcoding'){
@@ -283,6 +291,24 @@ video{width:100%;height:100%;display:block;outline:none}
       .catch(function(){ setPill('连接中断', ''); });
   }
   tick();
+})();
+</script>
+<footer class="foot"><span id="queen">全世界最可爱的噗噗大王~</span></footer>
+<script>
+(function(){
+  var words = ['全世界最可爱','无敌漂亮','闪闪发光','人见人爱','笑起来超甜','元气满满','聪明伶俐','宇宙第一美少女'];
+  var el = document.getElementById('queen');
+  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var i = 0;
+  setInterval(function(){
+    i = (i + 1) % words.length;
+    if (reduced) { el.textContent = words[i] + '的噗噗大王~'; return; }
+    el.classList.add('swap');
+    setTimeout(function(){
+      el.textContent = words[i] + '的噗噗大王~';
+      el.classList.remove('swap');
+    }, 320);
+  }, 2800);
 })();
 </script>
 </body>
