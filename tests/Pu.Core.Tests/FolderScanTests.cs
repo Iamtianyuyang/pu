@@ -45,6 +45,42 @@ public class FolderScanTests
         Assert.Equal(10, files.Count);
     }
 
+    [Fact]
+    public void 超过深度上限_不再深入()
+    {
+        using var dir = new TempDir();
+        var deep = dir.Path;
+        for (int i = 0; i < 10; i++) deep = Path.Combine(deep, $"d{i}");
+        Directory.CreateDirectory(deep);
+        File.WriteAllBytes(Path.Combine(deep, "hidden.mp4"), [1]);
+
+        // 深度限制 3 → 扫不到 10 层下的文件
+        var shallow = FolderScan.Scan(dir.Path, MediaExtensions.Defaults, maxDepth: 3);
+        Assert.Empty(shallow);
+        // 放宽深度 → 能找到
+        var deepScan = FolderScan.Scan(dir.Path, MediaExtensions.Defaults, maxDepth: 20);
+        var hit = Assert.Single(deepScan);
+        Assert.Equal("hidden.mp4", hit.Name);
+    }
+
+    [Fact]
+    public void Junction循环_不死循环()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var dir = new TempDir();
+        File.WriteAllBytes(Path.Combine(dir.Path, "a.mp4"), [1]);
+        // mklink /J 建 junction：sub → 指向自身父目录（循环）；junction 无需管理员权限
+        var link = Path.Combine(dir.Path, "loop");
+        var mk = TestEnv.RunCmd("mklink", "/J", link, dir.Path);
+        if (mk.ExitCode != 0) return; // 环境不支持 junction（如 CI 沙箱）→ 跳过
+
+        var files = FolderScan.Scan(dir.Path, MediaExtensions.Defaults);
+
+        // 正常返回且不重复扫到循环里的文件（junction 本身被跳过，只出根目录的 a.mp4）
+        var hit = Assert.Single(files);
+        Assert.Equal("a.mp4", hit.Name);
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = TestEnv.NewTestDir();

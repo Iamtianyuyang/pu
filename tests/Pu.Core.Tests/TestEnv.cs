@@ -1,3 +1,5 @@
+using Pu.Core.Common;
+
 namespace Pu.Core.Tests;
 
 /// <summary>测试环境助手：临时文件一律落在项目 tmp/ 下（项目写入边界）。</summary>
@@ -19,6 +21,19 @@ public static class TestEnv
     }
 
     public static bool HasFfmpeg => FindOnPath("ffmpeg") is not null && FindOnPath("ffprobe") is not null;
+
+    /// <summary>跑一个 cmd 内建命令（mklink 等），返回结果；失败时返回非 0 退出码。</summary>
+    public static ProcessResult RunCmd(params string[] args)
+    {
+        try
+        {
+            return ProcessRunner.RunAsync("cmd.exe", args).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return new ProcessResult(-1, "", "cmd.exe 不可用");
+        }
+    }
 
     private static string? FindOnPath(string name)
     {
