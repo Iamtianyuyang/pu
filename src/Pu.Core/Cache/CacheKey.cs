@@ -17,11 +17,5 @@ public static class CacheKey
     }
 
     public static string ArtifactDirFor(string filePath)
-    {
-        var baseDir = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
-        if (string.IsNullOrWhiteSpace(baseDir))
-            baseDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu", "cache");
-        return Path.Combine(baseDir, For(filePath));
-    }
+        => Path.Combine(CachePaths.RootDir(), For(filePath));
 }
