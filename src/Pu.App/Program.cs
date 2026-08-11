@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 using Pu.App.Shell;
 using Pu.App.Tray;
+using Pu.App.Ui;
 using Pu.Core.Cache;
 using Pu.Core.Ipc;
 using Pu.Core.Serving;
@@ -12,98 +14,104 @@ namespace Pu.App;
 public static class Program
 {
     private const string MutexName = @"Local\pu~";
+    private static volatile FolderJob? s_currentFolder;
 
     public static async Task<int> Main(string[] args)
     {
-        try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 重定向环境忽略 */ }
+        // 高 DPI（自绘窗口按物理像素布局）
+        SetProcessDpiAwarenessContext(-4);
 
-        if (args.Length == 0 || args[0] is "--help" or "-h" or "/?" or "help")
+        // ── 命令模式：临时分配控制台输出结果（WinExe 默认无控制台）──
+        if (args.Length == 0 || args[0].StartsWith("--", StringComparison.Ordinal))
         {
-            PrintUsage();
-            return 0;
+            bool needConsole = args.Length == 0
+                || args[0] is "--register" or "--unregister" or "--clean" or "--install" or "--uninstall" or "--help" or "-h" or "/?" or "help" or "--version";
+            if (needConsole) AllocConsole();
+            try { Console.OutputEncoding = Encoding.UTF8; } catch { }
+            return await RunCommandAsync(args);
         }
-        switch (args[0])
-        {
-            case "--version":
-                Console.WriteLine($"pu~ {VersionString} (M4)");
-                return 0;
-            case "--register":
-                RegisterShell();
-                return 0;
-            case "--unregister":
-                UnregisterShell();
-                return 0;
-            case "--install":
-                InstallSelf();
-                return 0;
-            case "--uninstall":
-                UninstallSelf();
-                return 0;
-            case "--clean":
-                CleanCache();
-                return 0;
-        }
+
+        // ── 服务模式：pu <文件|文件夹> ──
+        var debug = args.Contains("--debug", StringComparer.Ordinal);
+        if (debug) AllocConsole();
+        Log.ConsoleOutput = debug;
+        try { Console.OutputEncoding = Encoding.UTF8; } catch { }
 
         var input = Path.GetFullPath(args[0]);
         if (!File.Exists(input) && !Directory.Exists(input))
         {
-            Console.Error.WriteLine($"找不到文件或文件夹: {input}");
+            Log.Error($"找不到文件或文件夹: {input}");
             return 2;
         }
-        var noBrowser = args.Contains("--no-browser", StringComparer.Ordinal);
 
         using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-        var ui = new object();
 
-        // ── 单实例：已有实例在跑 → 命名管道把路径递过去（方案.md 第六节）──
+        // ── 单实例：已有实例在跑 → 命名管道把路径递过去 ──
         using var mutex = new Mutex(true, MutexName, out var firstInstance);
         if (!firstInstance)
         {
-            Console.WriteLine("pu~ 已在运行，把任务交给已有实例…");
+            Log.Info($"把任务交给已有实例: {input}");
             var sent = await IpcHub.SendAsync(input);
-            if (!sent) Console.Error.WriteLine("交付失败：已有实例可能正在退出，请稍后重试。");
             return sent ? 0 : 1;
         }
 
         try
         {
-            // ── 本实例成为服务端 ──
             var inbox = Channel.CreateUnbounded<string>();
             var ipcTask = IpcHub.ServeAsync(inbox, cts.Token);
 
             var server = await SessionServer.StartAsync(ct: cts.Token);
-            var url = await HandleIncomingAsync(server, input, cts.Token, ui);
+            Log.Info($"服务已启动，端口 {server.Port}");
 
-            var tray = StartTray(server, cts);
+            // 原生主窗口（专用 UI 线程）
+            var window = StartWindow(server, cts);
+            window.CloseRequested += () => cts.Cancel();
+            window.FolderFileClicked += index =>
+            {
+                var folder = s_currentFolder;
+                if (folder is null) return;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+                        window.SetJob(job);
+                    }
+                    catch (Exception ex) { Log.Error($"打开文件失败: {ex.Message}"); }
+                });
+            };
+
+            var tray = StartTray(server, cts, window);
+
+            // 处理入站路径（文件或文件夹）
+            var url = await HandleIncomingAsync(server, window, input, cts.Token);
             var inboxTask = Task.Run(async () =>
             {
                 await foreach (var path in inbox.Reader.ReadAllAsync(cts.Token))
                 {
                     try
                     {
-                        var u = await HandleIncomingAsync(server, path, cts.Token, ui);
-                        OpenBrowser(u);
+                        await HandleIncomingAsync(server, window, path, cts.Token);
+                        window.ShowWindow();
                     }
                     catch (Exception ex)
                     {
-                        lock (ui) Console.Error.WriteLine($"处理 {path} 失败: {ex.Message}");
+                        Log.Error($"处理 {path} 失败: {ex.Message}");
                     }
                 }
             });
-            var idleTask = IdleWatchAsync(server, cts, ui);
+            var idleTask = IdleWatchAsync(server, cts);
 
-            if (!noBrowser) OpenBrowser(url);
-            Console.WriteLine();
-            Console.WriteLine("pu~ 运行中 —— 右键其它视频/文件夹会直接送过来；托盘图标可停止服务。");
-            Console.WriteLine("按 Ctrl+C 退出。");
+            Log.Info($"就绪: {url}");
+            window.ShowWindow();
 
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token); }
-            catch (OperationCanceledException) { /* Ctrl+C / 托盘停止 / 空闲超时 */ }
+            catch (OperationCanceledException) { /* 窗口关闭 / 托盘停止 / 空闲超时 */ }
 
             cts.Cancel();
             await server.StopAsync();
             tray?.Dispose();
+            window.Dispose();
             try { await inboxTask; } catch { }
             try { await idleTask; } catch { }
             return 0;
@@ -114,66 +122,65 @@ public static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"错误: {ex.Message}");
+            Log.Error($"错误: {ex.Message}");
             return 1;
         }
     }
 
-    /// <summary>处理一个入站路径（文件或文件夹）：探测/扫描 → 注册会话 → 打印 → 返回状态页 URL。</summary>
+    /// <summary>处理一个入站路径：探测/扫描 → 注册会话 → 推给原生窗口显示。</summary>
     private static async Task<string> HandleIncomingAsync(
-        SessionServer server, string path, CancellationToken ct, object ui)
+        SessionServer server, MainWindow window, string path, CancellationToken ct)
     {
-        lock (ui) Console.WriteLine();
         if (Directory.Exists(path))
         {
             var folder = await server.SubmitFolderAsync(path, ct);
-            lock (ui)
-            {
-                Console.WriteLine($"pu~ 分析文件夹 {path}");
-                Console.WriteLine($"  {folder.Files.Count} 个媒体文件（点开才转码）");
-                Console.WriteLine($"  列表页: {server.UrlForFolder(folder)}");
-            }
+            s_currentFolder = folder;
+            Log.Info($"文件夹 {path}：{folder.Files.Count} 个媒体文件 → {server.UrlForFolder(folder)}");
+            window.SetFolder(folder);
             return server.UrlForFolder(folder);
         }
 
         var job = await server.SubmitAsync(path, ct);
-        lock (ui)
-        {
-            Console.WriteLine($"pu~ 分析 {path}");
-            Console.WriteLine($"  {job.SourceDescription}");
-            Console.WriteLine($"  计划: {job.PlanExplanation}");
-            Console.WriteLine($"  状态页: {server.UrlFor(job)}");
-        }
-        job.Changed += j => PrintJobProgress(j, ui);
+        Log.Info($"分析 {path}：{job.SourceDescription}");
+        Log.Info($"计划: {job.PlanExplanation}");
+        Log.Info($"状态页: {server.UrlFor(job)}");
+        job.Changed += _ => window.SetJob(job);
+        window.SetJob(job);
         return server.UrlFor(job);
     }
 
-    private static void PrintJobProgress(MediaJob job, object ui)
+    private static MainWindow StartWindow(SessionServer server, CancellationTokenSource cts)
     {
-        lock (ui)
+        var ready = new ManualResetEventSlim();
+        MainWindow? instance = null;
+        Exception? error = null;
+        var thread = new Thread(() =>
         {
-            switch (job.State)
+            try
             {
-                case JobState.Transcoding:
-                    Console.Write($"\r  转码中 {job.Progress * 100:F0}%    ");
-                    break;
-                case JobState.Serving:
-                    Console.Write("\r" + new string(' ', 36) + "\r");
-                    Console.WriteLine($"  ✓ 就绪：{job.Title}（{job.PlanExplanation}）");
-                    break;
-                case JobState.Failed:
-                    Console.Write("\r" + new string(' ', 36) + "\r");
-                    Console.Error.WriteLine($"  ✗ 失败：{job.Error}");
-                    break;
+                instance = new MainWindow();
+                ready.Set();
+                instance.Run();
             }
-        }
+            catch (Exception ex)
+            {
+                error = ex;
+                ready.Set();
+            }
+        })
+        { IsBackground = true, Name = "pu-ui" };
+        thread.Start();
+        ready.Wait(TimeSpan.FromSeconds(5));
+        if (error is not null) throw error;
+        if (instance is null) throw new InvalidOperationException("主窗口启动超时");
+        instance.SetBaseUrl($"http://{server.LanIp ?? "localhost"}:{server.Port}");
+        return instance;
     }
 
-    private static TrayIcon? StartTray(SessionServer server, CancellationTokenSource cts)
+    private static TrayIcon? StartTray(SessionServer server, CancellationTokenSource cts, MainWindow window)
     {
         try
         {
-            // 窗口必须在托盘线程上创建：线程池线程被回收时窗口会被销毁
             var ready = new ManualResetEventSlim();
             TrayIcon? instance = null;
             Exception? error = null;
@@ -197,21 +204,18 @@ public static class Program
             if (error is not null) throw error;
             if (instance is null) throw new InvalidOperationException("托盘启动超时");
 
-            instance.OpenStatusPage += () =>
-            {
-                if (server.LatestUrl is { } u) OpenBrowser(u);
-            };
+            instance.ShowRequested += () => window.ShowWindow();
             instance.ExitRequested += () => cts.Cancel();
             return instance;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"托盘启动失败（服务继续运行）: {ex.Message}");
+            Log.Error($"托盘启动失败（服务继续运行）: {ex.Message}");
             return null;
         }
     }
 
-    private static async Task IdleWatchAsync(SessionServer server, CancellationTokenSource cts, object ui)
+    private static async Task IdleWatchAsync(SessionServer server, CancellationTokenSource cts)
     {
         try
         {
@@ -220,13 +224,48 @@ public static class Program
                 await Task.Delay(TimeSpan.FromMinutes(1), cts.Token);
                 if (server.SessionCount == 0 && server.IdleFor > SessionServer.IdleTimeout)
                 {
-                    lock (ui) Console.WriteLine("空闲超时（30 分钟无会话），自动退出");
+                    Log.Info("空闲超时（30 分钟无会话），自动退出");
                     cts.Cancel();
                     return;
                 }
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    // ── 命令模式 ──
+
+    private static Task<int> RunCommandAsync(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "--help" or "-h" or "/?" or "help")
+        {
+            PrintUsage();
+            return Task.FromResult(0);
+        }
+        switch (args[0])
+        {
+            case "--version":
+                Console.WriteLine($"pu~ {VersionString} (M5)");
+                return Task.FromResult(0);
+            case "--register":
+                RegisterShell();
+                return Task.FromResult(0);
+            case "--unregister":
+                UnregisterShell();
+                return Task.FromResult(0);
+            case "--clean":
+                CleanCache();
+                return Task.FromResult(0);
+            case "--install":
+                InstallSelf();
+                return Task.FromResult(0);
+            case "--uninstall":
+                UninstallSelf();
+                return Task.FromResult(0);
+            default:
+                Console.Error.WriteLine($"未知参数: {args[0]}（pu --help 查看用法）");
+                return Task.FromResult(2);
+        }
     }
 
     private static void RegisterShell()
@@ -245,7 +284,6 @@ public static class Program
         Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
     }
 
-    /// <summary>自安装（方案.md M4）：把自己复制到 %LOCALAPPDATA%\Pu\ 并注册右键菜单，菜单指向稳定路径。</summary>
     private static void InstallSelf()
     {
         var destDir = Path.Combine(
@@ -284,7 +322,6 @@ public static class Program
             {
                 if (string.Equals(Environment.ProcessPath, dest, StringComparison.OrdinalIgnoreCase))
                 {
-                    // 正在运行的 exe 不能删自己：借 cmd 延时清理（本进程退出后生效）
                     var bat = Path.Combine(Path.GetTempPath(), $"pu-uninstall-{Environment.ProcessId}.cmd");
                     File.WriteAllText(bat,
                         $"@echo off\r\ntimeout /t 1 /nobreak > nul\r\ndel /f /q \"{dest}\"\r\ndel /f /q \"%~f0\"\r\n");
@@ -309,9 +346,6 @@ public static class Program
         try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
     }
 
-    private static string VersionString =>
-        typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-
     private static void CleanCache()
     {
         var (entries, bytes) = CacheManager.Stats();
@@ -326,36 +360,33 @@ public static class Program
         _ => $"{bytes} B",
     };
 
-    private static void OpenBrowser(string url)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"打开浏览器失败: {ex.Message}");
-        }
-    }
+    private static string VersionString =>
+        typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            pu~ —— 右键视频，扫码即播（M4：NativeAOT + 安装器）
+            pu~ —— 右键视频，扫码即播（M5：原生窗口）
 
             用法:
               pu --install            安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单
-              pu --uninstall          移除右键菜单并删除安装文件
+              pu --uninstall          卸载（移除右键菜单 + 删除安装文件）
               pu --register           注册右键菜单（媒体扩展名 + 文件夹，HKCU）
               pu --unregister         移除右键菜单
               pu --clean              清空转码缓存
-              pu <视频文件|文件夹>     处理并弹出状态页/列表页（已有实例则交给它）
-              pu --no-browser         不自动打开浏览器
-              pu --help               显示本帮助
+              pu <视频文件|文件夹>     处理并弹出原生窗口（已有实例则交给它）
+              pu --debug              服务模式时输出日志到控制台
+              pu --help / --version
 
-            状态页二维码在转码开始的瞬间就给出，转完自动起播。
-            缓存默认上限 20 GB，LRU 自动淘汰；空闲 30 分钟自动退出。
+            右键后弹出原生窗口：二维码 + 复制/打开链接 + 转码进度。
+            手机/平板扫二维码即看；空闲 30 分钟自动退出；托盘可停止。
             需要 ffmpeg：https://www.gyan.dev/ffmpeg/builds/ （bin 加入 PATH 或写进 config.json）
             """);
     }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool AllocConsole();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(int value);
 }

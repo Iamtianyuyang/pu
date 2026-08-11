@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Pu.App.Ui;
 
 namespace Pu.App.Tray;
 
@@ -33,8 +34,8 @@ public sealed class TrayIcon : IDisposable
     private bool _added;
     private bool _disposed;
 
-    /// <summary>打开状态页（托盘线程回调）。</summary>
-    public event Action? OpenStatusPage;
+    /// <summary>显示主窗口（托盘线程回调）。</summary>
+    public event Action? ShowRequested;
 
     /// <summary>用户点了「停止 pu~」。</summary>
     public event Action? ExitRequested;
@@ -54,7 +55,7 @@ public sealed class TrayIcon : IDisposable
             IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException("创建托盘消息窗口失败");
-        _hIcon = LoadTrayIcon();
+        _hIcon = AppIcons.LoadHIcon(16);
         AddToTray();
     }
 
@@ -115,22 +116,6 @@ public sealed class TrayIcon : IDisposable
         _added = false;
     }
 
-    private IntPtr LoadTrayIcon()
-    {
-        // 从嵌入资源提取 pu.ico（16px 简版在其中），LoadImage → HICON
-        var dest = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu", "pu.ico");
-        if (!File.Exists(dest))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            using var src = typeof(TrayIcon).Assembly.GetManifestResourceStream("pu.ico")
-                ?? throw new InvalidOperationException("缺少嵌入的 pu.ico");
-            using var file = File.Create(dest);
-            src.CopyTo(file);
-        }
-        return LoadImage(IntPtr.Zero, dest, IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
-    }
-
     private static IntPtr WindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         => s_current is { } t ? t.OnMessage(hWnd, msg, wParam, lParam) : DefWindowProc(hWnd, msg, wParam, lParam);
 
@@ -140,7 +125,7 @@ public sealed class TrayIcon : IDisposable
         {
             var code = (uint)lParam.ToInt64();
             if (code == WM_CONTEXTMENU) return ShowMenu(hWnd);
-            if (code == NIN_SELECT) OpenStatusPage?.Invoke(); // 左键单击
+            if (code == NIN_SELECT) ShowRequested?.Invoke(); // 左键单击
         }
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
@@ -149,13 +134,13 @@ public sealed class TrayIcon : IDisposable
     {
         GetCursorPos(out var pt);
         var menu = CreatePopupMenu();
-        AppendMenu(menu, MF_STRING, MenuOpen, "打开状态页");
+        AppendMenu(menu, MF_STRING, MenuOpen, "显示窗口");
         AppendMenu(menu, MF_SEPARATOR, 0, null);
         AppendMenu(menu, MF_STRING, MenuExit, "停止 pu~");
         var cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
             pt.X, pt.Y, 0, hWnd, IntPtr.Zero);
         DestroyMenu(menu);
-        if (cmd == MenuOpen) OpenStatusPage?.Invoke();
+        if (cmd == MenuOpen) ShowRequested?.Invoke();
         else if (cmd == MenuExit)
         {
             ExitRequested?.Invoke();

@@ -137,8 +137,8 @@ public sealed class SessionServer : IAsyncDisposable
             if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
             if (folder.Files.All(f => f.Index != index)) return Results.NotFound();
             // 不用请求级 CancellationToken：客户端断开（拿到 URL 后关闭连接）不能连坐取消后台转码
-            var url = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
-            return Results.Json(new OpenResultDto(url), JobStatusJsonContext.Default.OpenResultDto);
+            var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+            return Results.Json(new OpenResultDto(server.UrlFor(job)), JobStatusJsonContext.Default.OpenResultDto);
         });
 
         await app.StartAsync(ct);
@@ -206,18 +206,18 @@ public sealed class SessionServer : IAsyncDisposable
         return folder;
     }
 
-    /// <summary>点开文件夹里的一个文件 → 创建（或复用）媒体任务，返回 /s/ 状态页 URL。</summary>
-    public async Task<string> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
+    /// <summary>点开文件夹里的一个文件 → 创建（或复用）媒体任务，返回 job（URL 用 UrlFor 拼）。</summary>
+    public async Task<MediaJob> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
     {
         if (folder.OpenedToken(index) is { } existing && _jobs.TryGetValue(existing, out var existingJob)
             && existingJob.State != JobState.Failed)
-            return UrlFor(existingJob); // 复用，避免重复转码
+            return existingJob; // 复用，避免重复转码
 
         var file = folder.Files.FirstOrDefault(f => f.Index == index)
             ?? throw new InvalidOperationException($"文件不存在: {index}");
         var job = await SubmitAsync(file.Path, ct);
         folder.MarkOpened(index, job.Token);
-        return UrlFor(job);
+        return job;
     }
 
     public string UrlFor(MediaJob job) => $"http://{LanIp ?? "localhost"}:{Port}/s/{job.Token}";
