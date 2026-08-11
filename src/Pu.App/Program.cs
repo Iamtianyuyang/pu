@@ -260,7 +260,7 @@ public static class Program
         switch (args[0])
         {
             case "--version":
-                Console.WriteLine($"噗~噗噗~~噗噗噗噗~~~~~~~~ {VersionString} (WPF)");
+                Console.WriteLine($"噗~噗噗~~噗噗噗噗~~~~ {VersionString} (WPF)");
                 return Task.FromResult(0);
             case "--register":
                 RegisterShell();
@@ -288,7 +288,7 @@ public static class Program
         var exts = ShellConfig.Load();
         ShellRegister.Register(exts);
         Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名 + 文件夹（HKCU，无需管理员）。");
-        Console.WriteLine("  现在可以右键任意视频/文件夹 → 噗~噗噗~~噗噗噗噗~~~~~~~~");
+        Console.WriteLine("  现在可以右键任意视频/文件夹 → 噗~噗噗~~噗噗噗噗~~~~");
         Console.WriteLine("  撤销: pu --unregister");
     }
 
@@ -319,7 +319,7 @@ public static class Program
         var exts = ShellConfig.Load();
         ShellRegister.Register(exts, dest);
         Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名 + 文件夹（HKCU，无需管理员）。");
-        Console.WriteLine("现在可以右键任意视频/文件夹 → 噗~噗噗~~噗噗噗噗~~~~~~~~");
+        Console.WriteLine("现在可以右键任意视频/文件夹 → 噗~噗噗~~噗噗噗噗~~~~");
     }
 
     private static void UninstallSelf()
@@ -356,7 +356,7 @@ public static class Program
         }
         catch (Exception)
         {
-            Console.WriteLine($"pu.exe 被占用，请退出运行中的噗~噗噗~~噗噗噗噗~~~~~~~~后手动删除 {dest}");
+            Console.WriteLine($"pu.exe 被占用，请退出运行中的噗~噗噗~~噗噗噗噗~~~~后手动删除 {dest}");
         }
         try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
     }
@@ -383,7 +383,7 @@ public static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            噗~噗噗~~噗噗噗噗~~~~~~~~ —— 右键视频，扫码即播（.NET 10 + WPF）
+            噗~噗噗~~噗噗噗噗~~~~ —— 右键视频，扫码即播（.NET 10 + WPF）
 
             用法:
               pu --install            安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单

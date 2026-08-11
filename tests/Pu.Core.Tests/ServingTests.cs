@@ -129,7 +129,7 @@ public class ServingTests
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Contains("text/html", resp.Content.Headers.ContentType?.ToString());
         var html = await resp.Content.ReadAsStringAsync();
-        Assert.Contains("噗~噗噗~~噗噗噗噗~~~~~~~~", html);
+        Assert.Contains("噗~噗噗~~噗噗噗噗~~~~", html);
         Assert.Contains("<video", html);
     }
 

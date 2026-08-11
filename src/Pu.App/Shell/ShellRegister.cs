@@ -5,7 +5,7 @@ namespace Pu.App.Shell;
 /// <summary>
 /// 右键菜单注册（方案.md 第七节，v1 注册表方式）：
 ///   HKCU\Software\Classes\SystemFileAssociations\.mp4\shell\Pu
-///     (默认) = 噗~噗噗~~噗噗噗噗~~~~~~~~
+///     (默认) = 噗~噗噗~~噗噗噗噗~~~~
 ///     Icon   = "pu.exe",0
 ///     \command (默认) = "pu.exe" "%1"
 /// 全部写在 HKCU，不需要管理员。
@@ -26,7 +26,7 @@ public static class ShellRegister
             if (!ext.StartsWith('.')) continue;
             using var key = Registry.CurrentUser.CreateSubKey(
                 $@"Software\Classes\SystemFileAssociations\{ext}\shell\Pu");
-            key.SetValue(null, "噗~噗噗~~噗噗噗噗~~~~~~~~");
+            key.SetValue(null, "噗~噗噗~~噗噗噗噗~~~~");
             key.SetValue("Icon", $"\"{exe}\",0");
             using var command = key.CreateSubKey("command");
             command.SetValue(null, $"\"{exe}\" \"%1\"");
@@ -34,7 +34,7 @@ public static class ShellRegister
 
         // 文件夹（方案.md 第七节：右键文件夹 → 列表页）
         using var dirKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\Pu");
-        dirKey.SetValue(null, "噗~噗噗~~噗噗噗噗~~~~~~~~");
+        dirKey.SetValue(null, "噗~噗噗~~噗噗噗噗~~~~");
         dirKey.SetValue("Icon", $"\"{exe}\",0");
         using var dirCommand = dirKey.CreateSubKey("command");
         dirCommand.SetValue(null, $"\"{exe}\" \"%1\"");

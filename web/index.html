@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f5f7fb">
-<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~~~~~ 局域网视频播放页">
-<title>噗~噗噗~~噗噗噗噗~~~~~~~~</title>
+<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~ 局域网视频播放页">
+<title>噗~噗噗~~噗噗噗噗~~~~</title>
 <link rel="icon" type="image/png" href="/assets/pu-logo.png">
 <style>
 :root{
@@ -158,7 +158,7 @@ video{width:100%;height:100%;display:block;outline:none}
 <body>
 <header>
   <img class="logo" src="/assets/pu-logo.png" alt="噗~">
-  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~~~~~</h1>
+  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~</h1>
   <span class="pill" id="pill" aria-live="polite"><span class="dot"></span><span id="pillText">连接中</span></span>
 </header>
 
@@ -218,8 +218,8 @@ video{width:100%;height:100%;display:block;outline:none}
 
   function render(st){
     document.body.dataset.state = st.state; // 调试/测试钩子
-    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~';
-    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~~~~~';
+    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~';
+    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~';
     planText.textContent = st.plan || '';
 
     if (st.state === 'transcoding'){

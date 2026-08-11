@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f5f7fb">
-<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~~~~~ 局域网媒体文件列表">
-<title>噗~噗噗~~噗噗噗噗~~~~~~~~</title>
+<meta name="description" content="噗~噗噗~~噗噗噗噗~~~~ 局域网媒体文件列表">
+<title>噗~噗噗~~噗噗噗噗~~~~</title>
 <link rel="icon" type="image/png" href="/assets/pu-logo.png">
 <style>
 :root{
@@ -110,7 +110,7 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
 <body>
 <header>
   <img class="logo" src="/assets/pu-logo.png" alt="噗~">
-  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~~~~~</h1>
+  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~</h1>
   <span class="count" id="count"></span>
 </header>
 <div id="list" role="list">
@@ -138,8 +138,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
     return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
 
   function render(st){
-    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~';
-    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~~~~~';
+    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~';
+    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~';
     if (st.files.length === 0){
       list.innerHTML = '<div class="hint"><strong>这个文件夹里没有视频</strong>支持常见视频与音频格式<br>试试右键一个文件夹，或打开别的目录</div>';
       count.textContent = '0 个文件';
