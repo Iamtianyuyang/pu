@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1319">
+<title>pu~</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%230e1319'/%3E%3Cpath d='M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12' fill='none' stroke='%2363e6be' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24.5' cy='9.5' r='1.7' fill='%2363e6be'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0e1319; --panel:#151c24; --panel2:#1b2430; --line:#26303c;
+  --text:#e9eef4; --dim:#93a1b0; --mint:#63e6be; --mint-dim:#2fae8c;
+  --red:#ff7a7a; --amber:#f0b429;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:radial-gradient(1100px 460px at 85% -10%, rgba(99,230,190,.07), transparent 60%), var(--bg);
+  color:var(--text);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  padding:max(20px,env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+  max-width:640px;margin:0 auto;
+  display:flex;flex-direction:column;gap:14px;
+}
+header{display:flex;align-items:center;gap:10px}
+.logo{width:30px;height:30px;flex:none}
+h1{font-size:17px;font-weight:700;letter-spacing:.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.count{margin-left:auto;font-size:12px;color:var(--dim);border:1px solid var(--line);
+  border-radius:999px;padding:3px 11px;background:var(--panel);flex:none}
+#list{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;padding:12px 14px;cursor:pointer;transition:border-color .15s, transform .1s}
+.row:hover{border-color:var(--mint-dim)}
+.row:active{transform:scale(.99)}
+.row .idx{font-size:12px;color:var(--dim);width:26px;flex:none;text-align:right;font-variant-numeric:tabular-nums}
+.row .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .size{font-size:12px;color:var(--dim);flex:none}
+.badge{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim);flex:none}
+.badge.new{color:var(--dim)}
+.badge.transcoding{color:var(--amber);border-color:rgba(240,180,41,.4)}
+.badge.serving{color:#06231b;background:var(--mint);border-color:var(--mint);font-weight:600}
+.badge.failed{color:var(--red);border-color:rgba(255,122,122,.4)}
+.hint{font-size:12px;color:var(--dim);text-align:center;padding:30px 0}
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="8" fill="#151c24"/><path d="M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12" fill="none" stroke="#63e6be" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="9.5" r="1.7" fill="#63e6be"/></svg>
+  <h1 id="title">pu~</h1>
+  <span class="count" id="count"></span>
+</header>
+<div id="list"><div class="hint">加载中…</div></div>
+<script>
+(function(){
+  var token = location.pathname.split('/')[2];
+  if (!token) { document.body.innerHTML = '<p>链接无效</p>'; return; }
+  var list = document.getElementById('list');
+  var title = document.getElementById('title');
+  var count = document.getElementById('count');
+  var STATE_TEXT = { new:'未打开', transcoding:'转码中', serving:'就绪', failed:'失败' };
+  var lastKey = '';
+
+  function fmtSize(b){
+    if (b >= 1 << 30) return (b / (1 << 30)).toFixed(1) + ' GB';
+    if (b >= 1 << 20) return Math.round(b / (1 << 20)) + ' MB';
+    return Math.round(b / 1024) + ' KB';
+  }
+
+  function render(st){
+    title.textContent = st.title || 'pu~';
+    count.textContent = st.count + ' 个文件';
+    document.title = (st.title || 'pu~') + ' · pu~';
+    if (st.files.length === 0){ list.innerHTML = '<div class="hint">没有媒体文件</div>'; return; }
+    var key = st.files.map(function(f){ return f.index + ':' + f.state; }).join('|');
+    if (key === lastKey) return; // 状态没变不重建 DOM
+    lastKey = key;
+    var html = '';
+    st.files.forEach(function(f){
+      var t = STATE_TEXT[f.state] || f.state;
+      html += '<div class="row" data-i="' + f.index + '">'
+        + '<span class="idx">' + (f.index + 1) + '</span>'
+        + '<span class="name">' + esc(f.name) + '</span>'
+        + '<span class="size">' + fmtSize(f.sizeBytes) + '</span>'
+        + '<span class="badge ' + f.state + '">' + t + '</span>'
+        + '</div>';
+    });
+    list.innerHTML = html;
+  }
+
+  function esc(s){ return s.replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+
+  list.addEventListener('click', function(e){
+    var row = e.target.closest('.row');
+    if (!row) return;
+    var i = row.getAttribute('data-i');
+    row.style.opacity = '.5';
+    fetch('/f/' + token + '/open/' + i, { method:'POST' })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){ if (d.url) location.href = d.url; })
+      .catch(function(){ row.style.opacity = '1'; });
+  });
+
+  function tick(){
+    fetch('/f/' + token + '/status', { cache:'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(render)
+      .catch(function(){});
+  }
+  tick();
+  setInterval(tick, 2000);
+})();
+</script>
+</body>
+</html>

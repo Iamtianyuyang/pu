@@ -25,10 +25,11 @@ public sealed class EncoderCatalog
         var found = new List<string>();
         foreach (var line in result.StdOut.Split('\n'))
         {
-            if (line.Length < 2 || line[0] != 'V') continue; // 只要视频编码器
+            var t = line.TrimStart();
+            if (t.Length < 2 || t[0] != 'V') continue; // 只要视频编码器（行首有空格）
             foreach (var name in Preference)
             {
-                if (line.Contains(name, StringComparison.Ordinal)) { found.Add(name); break; }
+                if (t.Contains(name, StringComparison.Ordinal)) { found.Add(name); break; }
             }
         }
         return new EncoderCatalog(found);
@@ -41,5 +42,14 @@ public sealed class EncoderCatalog
         "h264_qsv"   => ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23"],
         "h264_amf"   => ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"],
         _            => ["-c:v", encoder, "-preset", "veryfast", "-crf", "23"],
+    };
+
+    /// <summary>硬件编码器对应的解码加速（输入选项，放在 -i 之前）；软编无。</summary>
+    public static string? HwaccelFor(string encoder) => encoder switch
+    {
+        "h264_nvenc" => "cuda",
+        "h264_qsv"   => "qsv",
+        "h264_amf"   => "d3d11va",
+        _            => null,
     };
 }

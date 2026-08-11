@@ -13,10 +13,14 @@ public enum PlanKind
 
 /// <summary>
 /// 转码决策矩阵（方案.md 第五节）—— 整个工具的核心。
-/// OutputArgs 是放在 `-i 输入` 之后、输出路径之前的 ffmpeg 参数。
+/// InputArgs 是放在 `-i 输入` 之前的参数（如硬件解码 -hwaccel）。
+/// OutputArgs 是放在 `-i 输入` 之后、输出路径之前的参数。
 /// </summary>
-public sealed record TranscodePlan(PlanKind Kind, string Explanation, string[] OutputArgs, string OutputExtension)
+public sealed record TranscodePlan(
+    PlanKind Kind, string Explanation, string[] OutputArgs, string OutputExtension, string[]? InputArgs = null)
 {
+    public string[] EffectiveInputArgs => InputArgs ?? [];
+
     public static TranscodePlan Create(MediaInfo info, EncoderCatalog encoders, string filePath)
         => Create(info, encoders, Mp4Boxes.IsFastStart(filePath));
 
@@ -80,14 +84,19 @@ public sealed record TranscodePlan(PlanKind Kind, string Explanation, string[] O
 
         // ── 4. 全转码：HEVC 10bit / Hi10P / AV1 / VP9 / 其它 ──
         var enc = encoders.PreferredH264Encoder ?? "libx264";
+        if (enc != "libx264" && (video.Width < 256 || video.Height < 144))
+            enc = "libx264"; // 过小视频低于硬编最小尺寸（如 NVENC 145px），直接软编避免必然失败的尝试
         var full = BuildMaps(info);
         full.AddRange(["-pix_fmt", "yuv420p"]);
         full.AddRange(EncoderCatalog.ArgsFor(enc));
         full.AddRange(["-tag:v", "avc1"]);
         AddAudio(full, info, audioIsAac);
         full.AddRange(["-movflags", "+faststart"]);
+        // 硬件编码器配硬件解码（失败时 Transcoder 自动软解回退）
+        var hwaccel = EncoderCatalog.HwaccelFor(enc);
+        var inputArgs = hwaccel is null ? [] : new[] { "-hwaccel", hwaccel };
         return new TranscodePlan(PlanKind.FullTranscode,
-            $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{enc}）", full.ToArray(), "mp4");
+            $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{enc}）", full.ToArray(), "mp4", inputArgs);
     }
 
     private static List<string> BuildMaps(MediaInfo info)
