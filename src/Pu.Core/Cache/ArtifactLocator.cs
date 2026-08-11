@@ -35,7 +35,8 @@ public static class ArtifactLocator
             return sidecar;
 
         var central = CentralArtifactPath(sourcePath, outputExtension, variant);
-        if (File.Exists(central)) return central; // 旧缓存时代的产物接着用（由 LRU 管理）
+        // 只认正式路径：.tmp 是生产中/崩溃残留，一律不算可复用
+        if (File.Exists(central)) return central;
         return null;
     }
 
@@ -52,8 +53,11 @@ public static class ArtifactLocator
                 IsHlsLayout(outputExtension) ? ArtifactDirOf(artifact) + ".tmp" : artifact + ".tmp",
                 sidecarDir, Sidecar: true);
         }
+        // 中央缓存同样先写 .tmp 再改名：硬崩溃（断电/杀进程）残留的半截文件不会在下次被当有效产物复用。
+        // HLS 用整目录 {key}/out.mp4.hls.tmp，非 HLS 用文件 {key}/out.mp4.tmp。
         var central = CentralArtifactPath(sourcePath, outputExtension, variant);
-        return new ArtifactTarget(central, central, Path.GetDirectoryName(central)!, Sidecar: false);
+        var temp = IsHlsLayout(outputExtension) ? ArtifactDirOf(central) + ".tmp" : central + ".tmp";
+        return new ArtifactTarget(central, temp, CacheKey.ArtifactDirFor(sourcePath, variant), Sidecar: false);
     }
 
     public static bool IsSidecarPath(string artifactPath)

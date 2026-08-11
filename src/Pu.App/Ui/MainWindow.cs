@@ -33,6 +33,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private readonly DispatcherTimer _feedbackTimer;
     private string _baseUrl = "http://localhost";
     private string _currentUrl = "";
+    private string _lastQrUrl = ""; // 二维码只随 URL 变化重建（进度刷新不重新编码 PNG）
     private MediaJob? _job;
     private FolderJob? _folder;
     private Button? _feedbackButton;
@@ -207,6 +208,7 @@ public sealed partial class MainWindow : Window, IDisposable
             IdleView.Visibility = Visibility.Collapsed;
             JobView.Visibility = Visibility.Collapsed;
             FolderView.Visibility = Visibility.Collapsed;
+            ErrorView.Visibility = Visibility.Collapsed;
             SetWindowStatus("正在分析", Accent);
             if (animate) AnimateIn(BusyView);
         });
@@ -219,6 +221,7 @@ public sealed partial class MainWindow : Window, IDisposable
         JobView.Visibility = Visibility.Collapsed;
         FolderView.Visibility = Visibility.Collapsed;
         BusyView.Visibility = Visibility.Collapsed;
+        ErrorView.Visibility = Visibility.Collapsed;
         _currentUrl = "";
         SetWindowStatus("等待任务", Muted);
         StopDotPulse();
@@ -232,6 +235,7 @@ public sealed partial class MainWindow : Window, IDisposable
         JobView.Visibility = Visibility.Visible;
         FolderView.Visibility = Visibility.Collapsed;
         BusyView.Visibility = Visibility.Collapsed;
+        ErrorView.Visibility = Visibility.Collapsed;
         if (animate) AnimateIn(JobView);
 
         _currentUrl = $"{_baseUrl}/s/{job.Token}";
@@ -239,8 +243,13 @@ public sealed partial class MainWindow : Window, IDisposable
         JobDescriptionText.Text = string.IsNullOrWhiteSpace(job.SourceDescription)
             ? Path.GetFileName(job.SourcePath)
             : job.SourceDescription;
-        JobLinkTextBox.Text = _currentUrl;
-        JobQrImage.Source = BuildQr(_currentUrl);
+        // 二维码编码 + 图片解码很贵：只在 URL 变化时做一次，进度刷新不重建
+        if (!string.Equals(_currentUrl, _lastQrUrl, StringComparison.Ordinal))
+        {
+            _lastQrUrl = _currentUrl;
+            JobLinkTextBox.Text = _currentUrl;
+            JobQrImage.Source = BuildQr(_currentUrl);
+        }
         BackToFolderButton.Visibility = _folder is null ? Visibility.Collapsed : Visibility.Visible;
 
         var percent = Math.Clamp((int)Math.Round(job.Progress * 100), 0, 100);
@@ -290,6 +299,7 @@ public sealed partial class MainWindow : Window, IDisposable
         JobView.Visibility = Visibility.Collapsed;
         FolderView.Visibility = Visibility.Visible;
         BusyView.Visibility = Visibility.Collapsed;
+        ErrorView.Visibility = Visibility.Collapsed;
         StopDotPulse();
         if (animate) AnimateIn(FolderView);
 
@@ -320,6 +330,29 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         SetWindowStatus("文件夹", Accent);
+    }
+
+    /// <summary>处理失败视图（探测/扫描/转码启动失败）：窗口给出错误，应用保持运行等待下一个任务。</summary>
+    public void ShowError(string path, string message)
+    {
+        OnUi(() =>
+        {
+            _job = null;
+            ErrorTitleText.Text = Directory.Exists(path)
+                ? Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar))
+                : Path.GetFileName(path);
+            ErrorMessageText.Text = Compact(message, 120);
+            var animate = ErrorView.Visibility != Visibility.Visible;
+            ErrorView.Visibility = Visibility.Visible;
+            IdleView.Visibility = Visibility.Collapsed;
+            JobView.Visibility = Visibility.Collapsed;
+            FolderView.Visibility = Visibility.Collapsed;
+            BusyView.Visibility = Visibility.Collapsed;
+            _currentUrl = "";
+            SetWindowStatus("处理失败", Danger);
+            StopDotPulse();
+            if (animate) AnimateIn(ErrorView);
+        });
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)

@@ -57,6 +57,7 @@ public sealed class SessionServer : IAsyncDisposable
     public string? LanIp { get; }
     public string? LatestUrl { get; private set; }
     public int JobCount => _jobs.Count;
+    /// <summary>会话数（信息用；空闲退出只看 ActiveJobCount + IdleFor，见 Program.IdleWatchAsync）。</summary>
     public int SessionCount => _jobs.Count + _folders.Count;
 
     /// <summary>正在转码的任务数（空闲退出只看这个 + IdleFor，不看 SessionCount）。</summary>
@@ -227,7 +228,7 @@ public sealed class SessionServer : IAsyncDisposable
             artifact = hit;
             artifactDir = Path.GetDirectoryName(hit)!;
             if (!ArtifactLocator.IsSidecarPath(hit))
-                CacheManager.Touch(artifactDir); // 中央缓存命中：刷新 LRU 标记
+                CacheManager.TouchEntry(hit); // 中央缓存命中：刷新 LRU 标记（HLS 要 touch 条目目录本身）
         }
         else
         {
@@ -241,7 +242,7 @@ public sealed class SessionServer : IAsyncDisposable
 
         var job = new MediaJob
         {
-            Token = RandomNumberGenerator.GetHexString(16),
+            Token = RandomNumberGenerator.GetHexString(32),
             SourcePath = sourcePath,
             Title = Path.GetFileNameWithoutExtension(sourcePath),
             SourceDescription = Describe(info),
@@ -268,8 +269,22 @@ public sealed class SessionServer : IAsyncDisposable
             Interlocked.Increment(ref _activeJobs);
             _ = RunJobAsync(job, sourcePath, info, plan, target, variant, ct);
         }
-        CacheManager.MaybeEvict();
+        var serving = ServingEntryDirs();
+        CacheManager.MaybeEvict(skipEntry: serving.Contains);
         return job;
+    }
+
+    /// <summary>正在播放的中央缓存条目：LRU 淘汰时跳过，防止播到一半被删。</summary>
+    private HashSet<string> ServingEntryDirs()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var job in _jobs.Values)
+        {
+            if (job.State != JobState.Serving) continue;
+            if (CacheManager.EntryDirFor(job.ArtifactPath) is { } entry)
+                set.Add(entry);
+        }
+        return set;
     }
 
     /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
@@ -280,7 +295,7 @@ public sealed class SessionServer : IAsyncDisposable
             throw new InvalidOperationException("文件夹里没有媒体文件");
         var folder = new FolderJob
         {
-            Token = RandomNumberGenerator.GetHexString(16),
+            Token = RandomNumberGenerator.GetHexString(32),
             FolderPath = folderPath,
             Title = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar)),
             Files = files,

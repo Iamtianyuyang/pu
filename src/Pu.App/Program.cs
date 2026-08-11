@@ -20,6 +20,16 @@ public static class Program
     private static readonly HashSet<MediaJob> WiredJobs = [];
     private static readonly object WireGate = new();
 
+    /// <summary>给 job 挂进度通知：同一个 job 只挂一次（文件夹重复点开复用同一 job）。</summary>
+    private static void WireJob(MediaJob job, MainWindow window)
+    {
+        lock (WireGate)
+        {
+            if (!WiredJobs.Add(job)) return;
+        }
+        job.Changed += _ => window.SetJob(job);
+    }
+
     public static async Task<int> Main(string[] args)
     {
         // ── 命令模式：临时分配控制台输出结果（WinExe 默认无控制台）──
@@ -77,6 +87,7 @@ public static class Program
                     try
                     {
                         var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+                        WireJob(job, window); // 进度更新驱动窗口
                         window.SetJob(job);
                     }
                     catch (Exception ex)
@@ -93,8 +104,17 @@ public static class Program
             window.ShowBusy(input);
             window.ShowWindow();
 
-            // 处理入站路径（文件或文件夹）
-            var url = await HandleIncomingAsync(server, window, input, cts.Token);
+            // 处理入站路径（文件或文件夹）；失败不退出——窗口显示错误，等待下一个任务
+            var url = "";
+            try
+            {
+                url = await HandleIncomingAsync(server, window, input, cts.Token);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"处理 {input} 失败: {ex.Message}");
+                window.ShowError(input, ex.Message);
+            }
             var inboxTask = Task.Run(async () =>
             {
                 await foreach (var path in inbox.Reader.ReadAllAsync(cts.Token))
@@ -108,12 +128,13 @@ public static class Program
                     catch (Exception ex)
                     {
                         Log.Error($"处理 {path} 失败: {ex.Message}");
+                        window.ShowError(path, ex.Message);
                     }
                 }
             });
             var idleTask = IdleWatchAsync(server, cts);
 
-            Log.Info($"就绪: {url}");
+            if (url.Length > 0) Log.Info($"就绪: {url}");
             window.ShowWindow();
 
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token); }
@@ -157,7 +178,7 @@ public static class Program
         Log.Info($"分析 {path}：{job.SourceDescription}");
         Log.Info($"计划: {job.PlanExplanation}");
         Log.Info($"状态页: {server.UrlFor(job)}");
-        job.Changed += _ => window.SetJob(job);
+        WireJob(job, window); // 只订阅一次（文件夹复用同一 job 时不重复订阅/重复刷新）
         window.SetJob(job);
         return server.UrlFor(job);
     }
@@ -242,7 +263,7 @@ public static class Program
             while (!cts.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromMinutes(1), cts.Token);
-                if (server.SessionCount == 0 && server.IdleFor > SessionServer.IdleTimeout)
+                if (server.ActiveJobCount == 0 && server.IdleFor > SessionServer.IdleTimeout)
                 {
                     Log.Info("空闲超时（30 分钟无会话），自动退出");
                     cts.Cancel();
@@ -274,6 +295,11 @@ public static class Program
                 UnregisterShell();
                 return Task.FromResult(0);
             case "--clean":
+                if (IsAnotherInstanceRunning())
+                {
+                    Console.Error.WriteLine("噗~噗噗~~噗噗噗噗~~~~ 正在运行中——请先停止它再清理缓存（否则会删掉正在播放的产物）。");
+                    return Task.FromResult(1);
+                }
                 CleanCache();
                 return Task.FromResult(0);
             case "--install":
@@ -364,6 +390,29 @@ public static class Program
             Console.WriteLine($"pu.exe 被占用，请退出运行中的噗~噗噗~~噗噗噗噗~~~~后手动删除 {dest}");
         }
         try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
+    }
+
+    /// <summary>命令模式下探测服务实例是否在跑（互斥体被持有）。</summary>
+    private static bool IsAnotherInstanceRunning()
+    {
+        try
+        {
+            using var mutex = new Mutex(false, MutexName);
+            if (mutex.WaitOne(0))
+            {
+                mutex.ReleaseMutex();
+                return false;
+            }
+            return true;
+        }
+        catch (AbandonedMutexException)
+        {
+            return false; // 前一个实例已崩溃，互斥体随之释放
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void CleanCache()

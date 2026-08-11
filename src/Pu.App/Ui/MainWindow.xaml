@@ -601,6 +601,41 @@
                     </StackPanel>
                 </Grid>
 
+                <Grid x:Name="ErrorView" Grid.Row="0" Visibility="Collapsed">
+                    <Grid.RenderTransform>
+                        <TranslateTransform />
+                    </Grid.RenderTransform>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-24,0,0">
+                        <TextBlock Text="处理失败"
+                                   HorizontalAlignment="Center"
+                                   FontFamily="Segoe UI Variable Display, Microsoft YaHei UI"
+                                   FontSize="23"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource DangerBrush}" />
+                        <TextBlock x:Name="ErrorTitleText"
+                                   Margin="0,10,0,0"
+                                   HorizontalAlignment="Center"
+                                   MaxWidth="380"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="ErrorMessageText"
+                                   Margin="0,10,0,0"
+                                   HorizontalAlignment="Center"
+                                   MaxWidth="380"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="13"
+                                   LineHeight="20"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="可以重新右键视频或文件夹试试"
+                                   Margin="0,14,0,0"
+                                   HorizontalAlignment="Center"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   FontSize="12" />
+                    </StackPanel>
+                </Grid>
+
                 <Grid x:Name="FolderView" Grid.Row="0" Visibility="Collapsed">
                     <Grid.RenderTransform>
                         <TranslateTransform />

@@ -213,6 +213,7 @@ video{width:100%;height:100%;display:block;outline:none}
   qr.src = '/s/' + token + '/qr.png?u=' + encodeURIComponent(location.href);
 
   var timer = null;
+  var hlsStarted = false; // hls.js（MSE）路径不会给 video.src 赋值，需要单独标记防重复初始化
 
   function show(el){ el.classList.remove('hidden'); }
   function hide(el){ el.classList.add('hidden'); }
@@ -238,7 +239,8 @@ video{width:100%;height:100%;display:block;outline:none}
       setPill('就绪', 'ok');
       hide(qrCard); hide(progressCard); hide(errorCard); show(playerCard);
       if (timer){ clearInterval(timer); timer = null; }
-      if (!video.src){
+      if (!video.src && !hlsStarted){
+        hlsStarted = true;
         buildSubs(st.subtitles || []);
         var url = st.hls
           ? '/s/' + token + '/hls/index.m3u8?v=' + 4

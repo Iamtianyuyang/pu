@@ -92,6 +92,64 @@ public class ArtifactLocatorTests
     }
 
     [Fact]
+    public void 中央缓存_先写临时名_崩溃残留不算可复用()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1]);
+
+        ArtifactLocator.WritableOverride = _ => false;
+        try
+        {
+            ArtifactLocator.ClearProbeCache();
+            var target = ArtifactLocator.ForProduction(src, "mp4", null);
+            Assert.False(target.Sidecar);
+            Assert.Equal(target.ArtifactPath + ".tmp", target.TempPath);
+            Assert.Null(ArtifactLocator.TryGetReusable(src, "mp4", null)); // 只有 .tmp → 不算可复用
+
+            // 模拟生产成功：临时 → 正式，可复用
+            Directory.CreateDirectory(Path.GetDirectoryName(target.TempPath)!);
+            File.WriteAllText(target.TempPath, "out");
+            File.Move(target.TempPath, target.ArtifactPath);
+            Assert.Equal(target.ArtifactPath, ArtifactLocator.TryGetReusable(src, "mp4", null));
+
+            // 硬崩溃残留的半截 .tmp 不能顶替正式产物
+            File.WriteAllText(target.TempPath, "half-written");
+            Assert.Equal(target.ArtifactPath, ArtifactLocator.TryGetReusable(src, "mp4", null));
+        }
+        finally
+        {
+            ArtifactLocator.WritableOverride = null;
+            ArtifactLocator.ClearProbeCache();
+        }
+    }
+
+    [Fact]
+    public void 中央缓存HLS_临时目录与正式目录分离()
+    {
+        using var dir = new TempDir();
+        var src = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(src, [1]);
+
+        ArtifactLocator.WritableOverride = _ => false;
+        try
+        {
+            ArtifactLocator.ClearProbeCache();
+            var target = ArtifactLocator.ForProduction(src, "mp4.hls", "fmt:5");
+            Assert.False(target.Sidecar);
+            Assert.EndsWith(Path.Combine("out.mp4.hls", "index.m3u8"), target.ArtifactPath);
+            Assert.EndsWith("out.mp4.hls.tmp", target.TempPath);
+            // 字幕工作目录 = 条目目录（LRU 淘汰时与产物一起走）
+            Assert.Equal(CacheKey.ArtifactDirFor(src, "fmt:5"), target.WorkDir);
+        }
+        finally
+        {
+            ArtifactLocator.WritableOverride = null;
+            ArtifactLocator.ClearProbeCache();
+        }
+    }
+
+    [Fact]
     public void CleanRegistered_删除产物清单与空目录()
     {
         using var dir = new TempDir();

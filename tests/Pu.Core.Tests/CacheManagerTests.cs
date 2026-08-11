@@ -97,6 +97,45 @@ public class CacheManagerTests
     }
 
     [Fact]
+    public void Evict_跳过受保护条目_只淘汰其余()
+    {
+        var (root, env) = IsolatedRoot();
+        using (env)
+        {
+            var old = MakeEntry(root, "old", 100);
+            CacheManager.Touch(old);
+            Thread.Sleep(1100);
+            var fresh = MakeEntry(root, "fresh", 100);
+            CacheManager.Touch(fresh);
+
+            // 容量 150 只能留一个；fresh 是较新的但被保护（如正在播放）→ 保护优先，淘汰 old
+            CacheManager.Evict(capacityBytes: 150, skipEntry: dir => dir == fresh);
+
+            Assert.False(Directory.Exists(old));
+            Assert.True(Directory.Exists(fresh));
+        }
+    }
+
+    [Fact]
+    public void TouchEntry_命中HLS产物_刷新的是条目目录()
+    {
+        var (root, env) = IsolatedRoot();
+        using (env)
+        {
+            // 模拟中央缓存 HLS 布局：{key}/out.mp4.hls/index.m3u8
+            var artifact = Path.Combine(root, "key1", "out.mp4.hls", "index.m3u8");
+            Directory.CreateDirectory(Path.GetDirectoryName(artifact)!);
+            File.WriteAllText(artifact, "#EXTM3U");
+            Thread.Sleep(1100);
+
+            CacheManager.TouchEntry(artifact);
+            var entry = Path.Combine(root, "key1");
+            // HLS 产物在子目录里，条目目录本身的 mtime 必须被刷新（Evict 按条目目录排序）
+            Assert.True(Directory.GetLastWriteTimeUtc(entry) > DateTime.UtcNow.AddSeconds(-30));
+        }
+    }
+
+    [Fact]
     public void Stats_统计项数与总字节()
     {
         var (root, env) = IsolatedRoot();

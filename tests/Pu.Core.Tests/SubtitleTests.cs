@@ -11,24 +11,56 @@ public class SubtitleTests
     [Fact]
     public async Task Vtt已存在_跳过抽取直接复用()
     {
-        // 无需 ffmpeg：所有 VTT 已存在时不应启动任何进程
+        // 无需 ffmpeg：所有 VTT 已存在且 .meta 与源文件一致时不应启动任何进程
         using var dir = new TempDir();
+        var sourcePath = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(sourcePath, [1, 2, 3, 4]);
         var subsDir = Path.Combine(dir.Path, "subs");
         Directory.CreateDirectory(subsDir);
         File.WriteAllText(Path.Combine(subsDir, "3.vtt"), "WEBVTT");
+        var fi = new FileInfo(sourcePath);
+        File.WriteAllText(Path.Combine(subsDir, ".meta"),
+            $"{{\"size\":{fi.Length},\"mtime\":{fi.LastWriteTimeUtc.Ticks}}}");
 
         var info = new MediaInfo
         {
-            FileName = Path.Combine(dir.Path, "movie.mkv"),
+            FileName = sourcePath,
             FormatName = "matroska",
             Streams = [new SubtitleStreamInfo(3, "subrip", "chi", "")],
         };
-        var subs = await SubtitleExtractor.ExtractAsync(info.FileName, info, dir.Path);
+        var subs = await SubtitleExtractor.ExtractAsync(sourcePath, info, dir.Path);
 
         var sub = Assert.Single(subs);
         Assert.Equal(3, sub.StreamIndex);
         Assert.Equal(Path.Combine(subsDir, "3.vtt"), sub.VttPath);
         Assert.Equal("WEBVTT", await File.ReadAllTextAsync(sub.VttPath));
+    }
+
+    [Fact]
+    public async Task 源文件被替换_旧字幕不复用()
+    {
+        if (!TestEnv.HasFfmpeg) return; // 失配后要真跑 ffmpeg 重新抽取
+        using var dir = new TempDir();
+        var sourcePath = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(sourcePath, [1, 2, 3, 4]);
+        var subsDir = Path.Combine(dir.Path, "subs");
+        Directory.CreateDirectory(subsDir);
+        File.WriteAllText(Path.Combine(subsDir, "3.vtt"), "WEBVTT: 旧字幕");
+        var fi = new FileInfo(sourcePath);
+        File.WriteAllText(Path.Combine(subsDir, ".meta"),
+            $"{{\"size\":{fi.Length},\"mtime\":{fi.LastWriteTimeUtc.Ticks}}}");
+
+        // 源文件被替换（mtime 变化）→ .meta 失配 → 旧 VTT 不得复用（重新抽取失败 → 空）
+        File.WriteAllText(sourcePath, "a completely different file");
+        var info = new MediaInfo
+        {
+            FileName = sourcePath,
+            FormatName = "matroska",
+            Streams = [new SubtitleStreamInfo(3, "subrip", "chi", "")],
+        };
+        var subs = await SubtitleExtractor.ExtractAsync(sourcePath, info, dir.Path);
+
+        Assert.Empty(subs); // 旧字幕没有挂到新视频上
     }
 
     [Fact]

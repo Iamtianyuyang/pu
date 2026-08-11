@@ -42,6 +42,8 @@ public static class ProcessRunner
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* 进程已退出 */ }
+            // 读取任务会随取消令牌一并结束，它们抛出的取消异常不该成为未观察异常
+            try { await Task.WhenAll(stdoutTask, stderrTask); } catch { }
             throw;
         }
 

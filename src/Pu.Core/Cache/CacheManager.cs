@@ -14,6 +14,24 @@ public static class CacheManager
 
     public static string RootDir => CachePaths.RootDir();
 
+    /// <summary>由中央缓存内产物路径反推条目目录（{root}/{key}）；不在缓存内的返回 null。</summary>
+    public static string? EntryDirFor(string artifactPath)
+    {
+        var root = RootDir;
+        if (!artifactPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
+        var rest = artifactPath.AsSpan(root.Length).TrimStart(['\\', '/']);
+        var sep = rest.IndexOfAny('\\', '/');
+        var key = (sep < 0 ? rest : rest[..sep]).ToString();
+        return key.Length == 0 ? null : Path.Combine(root, key);
+    }
+
+    /// <summary>命中中央缓存产物时刷新 LRU 标记（HLS 产物在 {key}/out.mp4.hls/ 子目录里，必须 touch 条目目录本身）。</summary>
+    public static void TouchEntry(string artifactPath)
+    {
+        var dir = EntryDirFor(artifactPath) ?? Path.GetDirectoryName(Path.GetFullPath(artifactPath));
+        if (dir is not null) Touch(dir);
+    }
+
     /// <summary>命中缓存时更新 LRU 标记。</summary>
     public static void Touch(string entryDir)
     {
@@ -38,17 +56,17 @@ public static class CacheManager
         return (entries, total);
     }
 
-    /// <summary>限频检查：每分钟最多跑一次全量统计。</summary>
-    public static void MaybeEvict()
+    /// <summary>限频检查：每分钟最多跑一次全量统计。skipEntry 返回 true 的条目跳过淘汰（如正在播放的产物）。</summary>
+    public static void MaybeEvict(Func<string, bool>? skipEntry = null)
     {
         if (Environment.TickCount64 - Interlocked.Read(ref _lastEvictTicks)
             < (long)MinEvictInterval.TotalMilliseconds)
             return;
         Interlocked.Exchange(ref _lastEvictTicks, Environment.TickCount64);
-        Evict();
+        Evict(skipEntry: skipEntry);
     }
 
-    public static void Evict(long capacityBytes = DefaultCapacityBytes)
+    public static void Evict(long capacityBytes = DefaultCapacityBytes, Func<string, bool>? skipEntry = null)
     {
         if (!Directory.Exists(RootDir)) return;
         var entries = new List<(string Dir, long Size, DateTime LastUse)>();
@@ -68,6 +86,7 @@ public static class CacheManager
         foreach (var e in entries.OrderBy(e => e.LastUse))
         {
             if (total <= capacityBytes) break;
+            if (skipEntry is not null && skipEntry(e.Dir)) continue; // 正在被播放的条目不删
             try { Directory.Delete(e.Dir, recursive: true); total -= e.Size; } catch { /* 被占用跳过 */ }
         }
     }

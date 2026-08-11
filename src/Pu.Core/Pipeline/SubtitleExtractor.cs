@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Pu.Core.Common;
 using Pu.Core.Probe;
 using Pu.Core.Serving;
@@ -17,22 +18,29 @@ public static class SubtitleExtractor
         "subrip", "srt", "ass", "ssa", "mov_text", "text",
     };
 
+    private const string MetaFileName = ".meta";
+
     public static async Task<List<SubtitleFile>> ExtractAsync(
         string sourcePath, MediaInfo info, string artifactDir, CancellationToken ct = default)
     {
         var targets = info.Subtitles.Where(s => Convertible.Contains(s.Codec)).ToList();
         if (targets.Count == 0) return [];
 
-        // 全部 VTT 已存在（缓存命中/上次已抽）→ 免 ffmpeg 直接复用。
-        // 键与产物复用一致（路径|大小|mtime），源变了必然落新目录，不存在陈旧字幕。
-        if (targets.All(s => File.Exists(VttPathFor(artifactDir, s.Index))))
+        // 全部 VTT 已存在（缓存命中/上次已抽）且源文件未变 → 免 ffmpeg 直接复用。
+        // 键与产物复用一致（路径|大小|mtime）：.meta 记录源文件身份，源被替换时旧字幕不挂到新视频上。
+        if (SourceMatches(sourcePath, artifactDir)
+            && targets.All(s => File.Exists(VttPathFor(artifactDir, s.Index))))
             return targets.Select(s => new SubtitleFile(s.Index, s.Codec, s.Language, s.Title,
                 VttPathFor(artifactDir, s.Index))).ToList();
 
         Directory.CreateDirectory(Path.Combine(artifactDir, "subs"));
 
         var singlePass = await ExtractSinglePassAsync(sourcePath, targets, artifactDir, ct);
-        if (singlePass is not null) return singlePass;
+        if (singlePass is not null)
+        {
+            WriteSourceMeta(sourcePath, artifactDir);
+            return singlePass;
+        }
 
         // 兜底：逐条抽取（某条流损坏导致整批失败时，保住能转的）
         var result = new List<SubtitleFile>();
@@ -50,6 +58,7 @@ public static class SubtitleExtractor
             if (r.ExitCode == 0 && File.Exists(vtt))
                 result.Add(new SubtitleFile(s.Index, s.Codec, s.Language, s.Title, vtt));
         }
+        if (result.Count > 0) WriteSourceMeta(sourcePath, artifactDir);
         return result;
     }
 
@@ -76,4 +85,35 @@ public static class SubtitleExtractor
 
     private static string VttPathFor(string artifactDir, int streamIndex)
         => Path.Combine(artifactDir, "subs", $"{streamIndex}.vtt");
+
+    /// <summary>subs/.meta：记录抽取时的源文件大小 + mtime，复用前校验，防陈旧字幕挂到被替换的源文件上。</summary>
+    private static bool SourceMatches(string sourcePath, string artifactDir)
+    {
+        try
+        {
+            var metaPath = Path.Combine(artifactDir, "subs", MetaFileName);
+            if (!File.Exists(metaPath)) return false;
+            var fi = new FileInfo(sourcePath);
+            using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+            var root = doc.RootElement;
+            return root.TryGetProperty("size", out var sizeEl) && sizeEl.TryGetInt64(out var size) && size == fi.Length
+                && root.TryGetProperty("mtime", out var mtimeEl) && mtimeEl.TryGetInt64(out var mtime)
+                && mtime == fi.LastWriteTimeUtc.Ticks;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void WriteSourceMeta(string sourcePath, string artifactDir)
+    {
+        try
+        {
+            var fi = new FileInfo(sourcePath);
+            var json = $"{{\"size\":{fi.Length},\"mtime\":{fi.LastWriteTimeUtc.Ticks}}}";
+            File.WriteAllText(Path.Combine(artifactDir, "subs", MetaFileName), json);
+        }
+        catch { /* 元数据写失败只是下次重抽，不影响字幕本身 */ }
+    }
 }
