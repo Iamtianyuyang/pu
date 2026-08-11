@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>pu</AssemblyName>
+    <RootNamespace>Pu.App</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- M4 目标：NativeAOT 单 exe。PublishAot 只影响 dotnet publish，不影响 build/run -->
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pu.Core\Pu.Core.csproj" />
+  </ItemGroup>
+
+</Project>
