@@ -10,6 +10,9 @@ public sealed record AudioStreamInfo(
     int Index, string Codec, int SampleRate, int Channels)
     : StreamInfo(Index, Codec, "audio");
 
+public sealed record SubtitleStreamInfo(int Index, string Codec, string Language, string Title)
+    : StreamInfo(Index, Codec, "subtitle");
+
 /// <summary>ffprobe 解析结果 —— 转码决策矩阵的唯一输入。</summary>
 public sealed class MediaInfo
 {
@@ -21,4 +24,5 @@ public sealed class MediaInfo
 
     public VideoStreamInfo? Video => Streams.OfType<VideoStreamInfo>().FirstOrDefault();
     public AudioStreamInfo? Audio => Streams.OfType<AudioStreamInfo>().FirstOrDefault();
+    public IReadOnlyList<SubtitleStreamInfo> Subtitles => Streams.OfType<SubtitleStreamInfo>().ToList();
 }

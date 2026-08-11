@@ -66,6 +66,9 @@ public static class MediaProbe
                     case "audio":
                         streams.Add(new AudioStreamInfo(index, codec, GetInt(s, "sample_rate"), GetInt(s, "channels")));
                         break;
+                    case "subtitle":
+                        streams.Add(new SubtitleStreamInfo(index, codec, GetTag(s, "language") ?? "", GetTag(s, "title") ?? ""));
+                        break;
                 }
             }
         }
@@ -92,6 +95,12 @@ public static class MediaProbe
         if (profile is not null && profile.Contains("10", StringComparison.Ordinal))
             return 10;
         return 8;
+    }
+
+    private static string? GetTag(JsonElement e, string name)
+    {
+        if (!e.TryGetProperty("tags", out var tags)) return null;
+        return GetString(tags, name);
     }
 
     private static string? GetString(JsonElement e, string name)

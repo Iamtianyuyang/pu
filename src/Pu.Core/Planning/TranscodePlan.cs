@@ -24,7 +24,24 @@ public sealed record TranscodePlan(PlanKind Kind, string Explanation, string[] O
     {
         var video = info.Video;
         if (video is null)
-            return new TranscodePlan(PlanKind.Unsupported, "文件中没有视频流", [], "mp4");
+        {
+            // 纯音频：AAC+MP4+faststart 直出，其余封装为 M4A（非 AAC 转 AAC）
+            var audio = info.Audio;
+            if (audio is null)
+                return new TranscodePlan(PlanKind.Unsupported, "文件中没有可用的音视频流", [], "mp4");
+            bool isMp4 = info.FormatName.Contains("mp4", StringComparison.OrdinalIgnoreCase);
+            if (audio.Codec == "aac" && isMp4 && isFastStart)
+                return new TranscodePlan(PlanKind.ServeOriginal, "AAC + MP4 已 faststart，原样直出", [], "m4a");
+            var args = new List<string>
+            {
+                "-map", "0:a:0",
+                "-c:a", audio.Codec == "aac" ? "copy" : "aac",
+                "-movflags", "+faststart",
+            };
+            return new TranscodePlan(PlanKind.Remux,
+                $"音频 {audio.Codec} 封装为 M4A（{("aac".Equals(audio.Codec, StringComparison.OrdinalIgnoreCase) ? "copy" : "转 AAC")}）",
+                args.ToArray(), "m4a");
+        }
 
         bool isMp4Family = info.FormatName.Contains("mp4", StringComparison.OrdinalIgnoreCase)
                         || info.FormatName.Contains("mov", StringComparison.OrdinalIgnoreCase);

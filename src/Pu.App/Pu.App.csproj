@@ -7,12 +7,15 @@
     <AssemblyName>pu</AssemblyName>
     <RootNamespace>Pu.App</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 托盘与右键菜单图标：嵌入 exe（右键菜单 Icon= 值指向 exe,0） -->
+    <ApplicationIcon>..\..\assets\pu.ico</ApplicationIcon>
     <!-- M4 目标：NativeAOT 单 exe。PublishAot 只影响 dotnet publish，不影响 build/run -->
     <PublishAot>true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Pu.Core\Pu.Core.csproj" />
+    <EmbeddedResource Include="..\..\assets\pu.ico" LogicalName="pu.ico" />
   </ItemGroup>
 
 </Project>

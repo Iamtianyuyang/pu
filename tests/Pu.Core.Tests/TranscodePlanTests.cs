@@ -105,7 +105,7 @@ public class TranscodePlanTests
     // ── 边界 ──
 
     [Fact]
-    public void 无视频流_不处理()
+    public void 纯音频AacMp4FastStart_直出()
     {
         var info = new MediaInfo
         {
@@ -113,6 +113,30 @@ public class TranscodePlanTests
             FormatName = Mp4,
             Streams = [new AudioStreamInfo(0, "aac", 44100, 2)],
         };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.ServeOriginal, plan.Kind);
+    }
+
+    [Fact]
+    public void 纯音频Mp3_封装为M4A_音频转AAC()
+    {
+        var info = new MediaInfo
+        {
+            FileName = "song.mp3",
+            FormatName = "mp3",
+            Streams = [new AudioStreamInfo(0, "mp3", 44100, 2)],
+        };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.Remux, plan.Kind);
+        Assert.Equal("m4a", plan.OutputExtension);
+        Assert.Contains("-map 0:a:0", Args(plan));
+        Assert.Contains("-c:a aac", Args(plan));
+    }
+
+    [Fact]
+    public void 空文件无任何流_不处理()
+    {
+        var info = new MediaInfo { FileName = "empty.bin", FormatName = "unknown", Streams = [] };
         var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
         Assert.Equal(PlanKind.Unsupported, plan.Kind);
     }
