@@ -41,6 +41,7 @@ public sealed class SessionServer : IAsyncDisposable
     };
 
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
     private readonly WebApplication _app;
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
 
@@ -48,6 +49,7 @@ public sealed class SessionServer : IAsyncDisposable
     public string? LanIp { get; }
     public string? LatestUrl { get; private set; }
     public int JobCount => _jobs.Count;
+    public int SessionCount => _jobs.Count + _folders.Count;
     public TimeSpan IdleFor => TimeSpan.FromTicks(DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastActivityTicks));
     public static TimeSpan IdleTimeout => TimeSpan.FromMinutes(30);
 
@@ -115,6 +117,30 @@ public sealed class SessionServer : IAsyncDisposable
 
         app.MapGet("/", () => Results.Text("pu~ is running"));
 
+        // ── 文件夹模式：列表页 / 状态轮询 / 点开文件 ──
+        app.MapGet("/f/{token}", (string token) =>
+        {
+            server.Touch();
+            return server._folders.TryGetValue(token, out _)
+                ? Results.Content(EmbeddedWeb.FolderHtml, "text/html; charset=utf-8")
+                : Results.NotFound();
+        });
+        app.MapGet("/f/{token}/status", (string token) =>
+        {
+            server.Touch();
+            if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
+            return Results.Json(server.ToFolderDto(folder), JobStatusJsonContext.Default.FolderStatusDto);
+        });
+        app.MapPost("/f/{token}/open/{index:int}", async (string token, int index) =>
+        {
+            server.Touch();
+            if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
+            if (folder.Files.All(f => f.Index != index)) return Results.NotFound();
+            // 不用请求级 CancellationToken：客户端断开（拿到 URL 后关闭连接）不能连坐取消后台转码
+            var url = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+            return Results.Json(new OpenResultDto(url), JobStatusJsonContext.Default.OpenResultDto);
+        });
+
         await app.StartAsync(ct);
         return server;
     }
@@ -149,7 +175,8 @@ public sealed class SessionServer : IAsyncDisposable
 
         if (passthrough || File.Exists(artifact))
         {
-            // 零处理 / 缓存命中：抽完字幕直接可播
+            // 零处理 / 缓存命中：抽完字幕直接可播；更新 LRU 标记
+            CacheManager.Touch(artifactDir);
             var subs = await SubtitleExtractor.ExtractAsync(sourcePath, info, artifactDir, ct);
             job.SetServing(subs);
         }
@@ -157,8 +184,44 @@ public sealed class SessionServer : IAsyncDisposable
         {
             _ = RunJobAsync(job, sourcePath, info, plan, artifact, artifactDir, ct);
         }
+        CacheManager.MaybeEvict();
         return job;
     }
+
+    /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
+    public async Task<FolderJob> SubmitFolderAsync(string folderPath, CancellationToken ct = default)
+    {
+        var files = await Task.Run(() => FolderScan.Scan(folderPath, MediaExtensions.Defaults), ct);
+        if (files.Count == 0)
+            throw new InvalidOperationException("文件夹里没有媒体文件");
+        var folder = new FolderJob
+        {
+            Token = RandomNumberGenerator.GetHexString(16),
+            FolderPath = folderPath,
+            Title = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar)),
+            Files = files,
+        };
+        _folders[folder.Token] = folder;
+        LatestUrl = UrlForFolder(folder);
+        return folder;
+    }
+
+    /// <summary>点开文件夹里的一个文件 → 创建（或复用）媒体任务，返回 /s/ 状态页 URL。</summary>
+    public async Task<string> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
+    {
+        if (folder.OpenedToken(index) is { } existing && _jobs.TryGetValue(existing, out var existingJob)
+            && existingJob.State != JobState.Failed)
+            return UrlFor(existingJob); // 复用，避免重复转码
+
+        var file = folder.Files.FirstOrDefault(f => f.Index == index)
+            ?? throw new InvalidOperationException($"文件不存在: {index}");
+        var job = await SubmitAsync(file.Path, ct);
+        folder.MarkOpened(index, job.Token);
+        return UrlFor(job);
+    }
+
+    public string UrlFor(MediaJob job) => $"http://{LanIp ?? "localhost"}:{Port}/s/{job.Token}";
+    public string UrlForFolder(FolderJob folder) => $"http://{LanIp ?? "localhost"}:{Port}/f/{folder.Token}";
 
     /// <summary>测试/外部用：注册一个已构造好的 job。</summary>
     public MediaJob Register(MediaJob job)
@@ -167,8 +230,6 @@ public sealed class SessionServer : IAsyncDisposable
         LatestUrl = UrlFor(job);
         return job;
     }
-
-    public string UrlFor(MediaJob job) => $"http://{LanIp ?? "localhost"}:{Port}/s/{job.Token}";
 
     private void Touch() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
@@ -183,6 +244,7 @@ public sealed class SessionServer : IAsyncDisposable
             var transcode = Transcoder.TranscodeAsync(sourcePath, plan, artifact, info.DurationUs, progress, ct);
             var subs = SubtitleExtractor.ExtractAsync(sourcePath, info, artifactDir, ct);
             await Task.WhenAll(transcode, subs);
+            CacheManager.Touch(artifactDir); // 新产物入缓存，更新 LRU 标记
             job.SetServing(await subs);
         }
         catch (OperationCanceledException)
@@ -203,6 +265,18 @@ public sealed class SessionServer : IAsyncDisposable
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
             job.Title, job.PlanExplanation, job.SourcePath, subs);
+    }
+
+    private FolderStatusDto ToFolderDto(FolderJob folder)
+    {
+        var files = folder.Files.Select(f =>
+        {
+            var state = "new";
+            if (folder.OpenedToken(f.Index) is { } token && _jobs.TryGetValue(token, out var job))
+                state = job.State.ToString().ToLowerInvariant();
+            return new FolderFileDto(f.Index, f.Name, f.SizeBytes, state);
+        }).ToList();
+        return new FolderStatusDto(folder.Title, files.Count, files);
     }
 
     private static string Describe(MediaInfo info)
