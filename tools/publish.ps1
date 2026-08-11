@@ -27,3 +27,19 @@ if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Force -Path $exe, $manualCopy -DestinationPath $zip
 
 Write-Host 'Package ready: publish\pu-windows-x64.zip'
+
+# Optional installer: compile tools/setup.iss when Inno Setup (ISCC) is available.
+$iscc = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if ($null -ne $iscc) {
+    Write-Host '== Building installer (Inno Setup) =='
+    & $iscc /Q (Join-Path $PSScriptRoot 'setup.iss')
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed with exit code $LASTEXITCODE." }
+    Write-Host 'Installer ready: publish\pu-setup.exe'
+} else {
+    Write-Host 'Inno Setup not found; skipping installer (portable zip only).'
+}

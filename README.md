@@ -17,14 +17,18 @@
 pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹，HKCU）
 ```
 
-### 发给别人（publish/pu-windows-x64.zip）
+### 发给别人
 
-解压后：
+**安装版 `publish/pu-setup.exe`**（推荐）：双击 → 下一步 → 完成。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
+
+**便携版 `publish/pu-windows-x64.zip`**：解压即用，不写注册表；需要右键菜单时手动执行：
 
 ```
 pu.exe --install      # 安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单（无需管理员）
 pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 ```
+
+> 两个版本共用 `%LOCALAPPDATA%\Pu` 的配置与缓存；不要同时装两份（卸载任一份会清掉共享数据）。
 
 - **.NET 10 自包含单文件 exe**，目标电脑无需预装 .NET
 - 需要 ffmpeg（不捆绑，GPL 分发义务）：
@@ -76,7 +80,7 @@ pu --help / --version
 ## 打包
 
 ```powershell
-powershell -File tools/publish.ps1   # WPF 自包含单文件发布 + 产出 zip
+powershell -File tools/publish.ps1   # 发布单文件 exe + 便携 zip；装了 Inno Setup 时同时产出安装包 pu-setup.exe
 ```
 
 ## 测试
