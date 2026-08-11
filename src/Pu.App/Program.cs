@@ -18,9 +18,6 @@ public static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        // 高 DPI（自绘窗口按物理像素布局）
-        SetProcessDpiAwarenessContext(-4);
-
         // ── 命令模式：临时分配控制台输出结果（WinExe 默认无控制台）──
         if (args.Length == 0 || args[0].StartsWith("--", StringComparison.Ordinal))
         {
@@ -63,7 +60,7 @@ public static class Program
             var server = await SessionServer.StartAsync(ct: cts.Token);
             Log.Info($"服务已启动，端口 {server.Port}");
 
-            // 原生主窗口（专用 UI 线程）
+            // WPF 主窗口（专用 STA UI 线程）
             var window = StartWindow(server, cts);
             window.CloseRequested += () => cts.Cancel();
             window.FolderFileClicked += index =>
@@ -77,11 +74,19 @@ public static class Program
                         var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
                         window.SetJob(job);
                     }
-                    catch (Exception ex) { Log.Error($"打开文件失败: {ex.Message}"); }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"打开文件失败: {ex.Message}");
+                        window.SetFolderFileError(index, ex.Message);
+                    }
                 });
             };
 
             var tray = StartTray(server, cts, window);
+
+            // 先亮窗（「正在分析」占位），再跑探测/决策——避免右键后几秒没界面像卡死
+            window.ShowBusy(input);
+            window.ShowWindow();
 
             // 处理入站路径（文件或文件夹）
             var url = await HandleIncomingAsync(server, window, input, cts.Token);
@@ -91,8 +96,9 @@ public static class Program
                 {
                     try
                     {
-                        await HandleIncomingAsync(server, window, path, cts.Token);
+                        window.ShowBusy(path);
                         window.ShowWindow();
+                        await HandleIncomingAsync(server, window, path, cts.Token);
                     }
                     catch (Exception ex)
                     {
@@ -127,7 +133,7 @@ public static class Program
         }
     }
 
-    /// <summary>处理一个入站路径：探测/扫描 → 注册会话 → 推给原生窗口显示。</summary>
+    /// <summary>处理一个入站路径：探测/扫描 → 注册会话 → 推给 WPF 窗口显示。</summary>
     private static async Task<string> HandleIncomingAsync(
         SessionServer server, MainWindow window, string path, CancellationToken ct)
     {
@@ -140,6 +146,8 @@ public static class Program
             return server.UrlForFolder(folder);
         }
 
+        s_currentFolder = null;
+        window.SetFolder(null);
         var job = await server.SubmitAsync(path, ct);
         Log.Info($"分析 {path}：{job.SourceDescription}");
         Log.Info($"计划: {job.PlanExplanation}");
@@ -158,6 +166,10 @@ public static class Program
         {
             try
             {
+                var application = new System.Windows.Application
+                {
+                    ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown,
+                };
                 instance = new MainWindow();
                 ready.Set();
                 instance.Run();
@@ -166,9 +178,12 @@ public static class Program
             {
                 error = ex;
                 ready.Set();
+                Log.Error($"WPF 窗口线程异常: {ex}");
+                cts.Cancel();
             }
         })
         { IsBackground = true, Name = "pu-ui" };
+        thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         ready.Wait(TimeSpan.FromSeconds(5));
         if (error is not null) throw error;
@@ -245,7 +260,7 @@ public static class Program
         switch (args[0])
         {
             case "--version":
-                Console.WriteLine($"pu~ {VersionString} (M5)");
+                Console.WriteLine($"pu~ {VersionString} (WPF)");
                 return Task.FromResult(0);
             case "--register":
                 RegisterShell();
@@ -366,7 +381,7 @@ public static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            pu~ —— 右键视频，扫码即播（M5：原生窗口）
+            pu~ —— 右键视频，扫码即播（.NET 9 + WPF）
 
             用法:
               pu --install            安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单
@@ -374,11 +389,11 @@ public static class Program
               pu --register           注册右键菜单（媒体扩展名 + 文件夹，HKCU）
               pu --unregister         移除右键菜单
               pu --clean              清空转码缓存
-              pu <视频文件|文件夹>     处理并弹出原生窗口（已有实例则交给它）
+              pu <视频文件|文件夹>     处理并弹出 WPF 窗口（已有实例则交给它）
               pu --debug              服务模式时输出日志到控制台
               pu --help / --version
 
-            右键后弹出原生窗口：二维码 + 复制/打开链接 + 转码进度。
+            右键后弹出 WPF 窗口：二维码 + 复制/打开链接 + 转码进度。
             手机/平板扫二维码即看；空闲 30 分钟自动退出；托盘可停止。
             需要 ffmpeg：https://www.gyan.dev/ffmpeg/builds/ （bin 加入 PATH 或写进 config.json）
             """);
@@ -387,6 +402,4 @@ public static class Program
     [DllImport("kernel32.dll")]
     private static extern bool AllocConsole();
 
-    [DllImport("user32.dll")]
-    private static extern bool SetProcessDpiAwarenessContext(int value);
 }

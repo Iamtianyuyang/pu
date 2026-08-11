@@ -1,13 +1,10 @@
-# 图标生成：assets/pu~.png → assets/pu.ico（多尺寸 16→256，PNG-in-ICO）
-# 依赖：dotnet（用 tmp 下的小工具完成缩放与封装，不依赖 ImageMagick）
+# 图标生成：原始手绘稿 → 透明裁边 PNG + 多尺寸 ICO
+# 全部使用仓库内的 .NET 10 工具，不依赖 ImageMagick / Python。
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
-$tool = Join-Path $root 'tmp\iconconv'
-if (-not (Test-Path (Join-Path $tool 'Program.cs'))) {
-    Write-Host '缺少 tmp/iconconv 转换工具'; exit 1
-}
-
-dotnet run --project $tool -- (Join-Path $root 'assets\pu~.png') (Join-Path $root 'assets\pu.ico')
-Write-Host '图标已生成：assets/pu.ico（编辑 assets/pu~.png 后重跑本脚本）'
+dotnet run --project (Join-Path $root 'tools\Pu.IconBuilder') -- `
+    (Join-Path $root 'assets\pu~.png') `
+    (Join-Path $root 'assets\pu-logo.png') `
+    (Join-Path $root 'assets\pu.ico')

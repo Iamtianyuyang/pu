@@ -3,20 +3,29 @@ using Pu.Core.Common;
 namespace Pu.Core.Pipeline;
 
 /// <summary>
-/// 硬件编码器探测。优先 NVENC → QSV → AMF → libx264 软编。
-/// 探测结果来自 `ffmpeg -encoders`，避免写死机器不存在的编码器。
+/// 硬件编码器探测。优先 NVENC → AMF → QSV → libx264 软编：
+/// N 卡必为独显；AMF 多为 A 卡独显（APU 核显亦有）；QSV 基本是 Intel 核显（Arc 独显罕见），
+/// 所以按这个顺序，有独显时自然优先命中独显。
+/// 注意 `ffmpeg -encoders` 列的是编译进 build 的编码器（没有对应硬件也照样列），
+/// 因此硬件候选逐个做 lavfi 实测，第一个真能编码的胜出。
 /// </summary>
 public sealed class EncoderCatalog
 {
-    private static readonly string[] Preference = ["h264_nvenc", "h264_qsv", "h264_amf", "libx264"];
+    private static readonly string[] Preference = ["h264_nvenc", "h264_amf", "h264_qsv", "libx264"];
+    private static readonly string[] Hardware = ["h264_nvenc", "h264_amf", "h264_qsv"];
 
     public IReadOnlyList<string> Available { get; }
     public string PreferredH264Encoder { get; }
+    public string DetectionNote { get; }
 
-    public EncoderCatalog(IEnumerable<string> available)
+    /// <summary>不走全转码分支时使用的占位目录（只含软编，矩阵不会读到它）。</summary>
+    public static EncoderCatalog SoftwareOnly { get; } = new(["libx264"]);
+
+    public EncoderCatalog(IEnumerable<string> available, string? detectionNote = null)
     {
         Available = available.Distinct(StringComparer.Ordinal).ToList();
         PreferredH264Encoder = Preference.FirstOrDefault(Available.Contains) ?? "libx264";
+        DetectionNote = detectionNote ?? PreferredH264Encoder;
     }
 
     public static async Task<EncoderCatalog> DetectAsync(CancellationToken ct = default)
@@ -32,15 +41,45 @@ public sealed class EncoderCatalog
                 if (t.Contains(name, StringComparison.Ordinal)) { found.Add(name); break; }
             }
         }
-        return new EncoderCatalog(found);
+
+        // 实测：列表里有 ≠ 这台机器能跑（典型：没有 Intel 核显却列着 h264_qsv）。
+        // 候选并发试编（NVENC/AMF/QSV 在不同硬件上，互不干扰），总耗时 ≈ 最慢的一次而非累加。
+        var candidates = Hardware.Where(found.Contains).ToList();
+        var results = await Task.WhenAll(
+            candidates.Select(async enc => (enc, ok: await TestEncodeAsync(enc, ct))));
+        var usable = results.Where(r => r.ok).Select(r => r.enc).ToList(); // 顺序保持 Preference
+        var preferred = usable.FirstOrDefault() ?? "libx264";
+        var note = preferred == "libx264"
+            ? "libx264 软编（硬件编码器实测均不可用）"
+            : $"{preferred} 硬编（实测可用，独显优先 NVENC→AMF→QSV）";
+        return new EncoderCatalog(usable.Append("libx264"), note);
     }
 
-    /// <summary>各编码器的质量参数（H.264 目标，CRF 类 23）。</summary>
+    /// <summary>用 lavfi 生成 8 帧小视频试编，验证编码器在这台机器上真的可用（硬件/驱动都在）。</summary>
+    private static async Task<bool> TestEncodeAsync(string encoder, CancellationToken ct)
+    {
+        try
+        {
+            var result = await ProcessRunner.RunAsync(FfmpegLocator.Exe,
+                ["-hide_banner", "-loglevel", "error",
+                 "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+                 "-frames:v", "8", "-pix_fmt", "yuv420p",
+                 "-c:v", encoder, "-f", "null", "-"],
+                cancellationToken: ct);
+            return result.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>各编码器的质量参数（H.264 目标，CRF 类 23；预设实测调优过：NVENC p4 比 p5 快 ~13% 且文件略小，AMF speed 快 ~7%）。</summary>
     public static string[] ArgsFor(string encoder) => encoder switch
     {
-        "h264_nvenc" => ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"],
+        "h264_nvenc" => ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23"],
         "h264_qsv"   => ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23"],
-        "h264_amf"   => ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"],
+        "h264_amf"   => ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"],
         _            => ["-c:v", encoder, "-preset", "veryfast", "-crf", "23"],
     };
 

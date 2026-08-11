@@ -1,23 +1,26 @@
-﻿# NativeAOT 发布 + 打包（方案.md M4）
-# 产物：publish/pu/pu.exe（单文件）+ publish/pu-windows-x64.zip（含使用说明）
+# .NET 10 WPF self-contained single-file publish and packaging.
+# Output: publish/pu/pu.exe and publish/pu-windows-x64.zip.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
-Write-Host '== NativeAOT 发布（win-x64，可能需要几分钟）=='
-dotnet publish src/Pu.App -c Release -r win-x64 -o publish/pu
+Write-Host '== Publishing .NET 10 WPF (win-x64, self-contained, single-file) =='
+dotnet publish src/Pu.App -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/pu
 
 $exe = Join-Path $root 'publish\pu\pu.exe'
-if (-not (Test-Path $exe)) { Write-Host '发布失败：找不到 pu.exe'; exit 1 }
+if (-not (Test-Path $exe)) { throw 'Publish failed: pu.exe was not produced.' }
 
 $size = (Get-Item $exe).Length
 Write-Host ("pu.exe: {0:N1} MB" -f ($size / 1MB))
 
-$manual = Join-Path $root 'tools\使用说明.txt'
-Copy-Item $manual (Join-Path $root 'publish\pu\')
+$manual = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.txt' -File | Select-Object -First 1
+if ($null -eq $manual) { throw 'Package manual was not found under tools/.' }
+$manualCopy = Join-Path $root (Join-Path 'publish\pu' $manual.Name)
+Copy-Item -LiteralPath $manual.FullName -Destination $manualCopy -Force
+
 $zip = Join-Path $root 'publish\pu-windows-x64.zip'
 if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Force -Path (Join-Path $root 'publish\pu\pu.exe'), (Join-Path $root 'publish\pu\使用说明.txt') -DestinationPath $zip
+Compress-Archive -Force -Path $exe, $manualCopy -DestinationPath $zip
 
-Write-Host "打包完成：publish\pu-windows-x64.zip"
-Write-Host '发给别人后：解压 → 运行 pu.exe --install → 按提示装 ffmpeg'
+Write-Host 'Package ready: publish\pu-windows-x64.zip'

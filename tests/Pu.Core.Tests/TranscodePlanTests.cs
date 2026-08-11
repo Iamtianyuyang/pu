@@ -41,13 +41,14 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void H264_Mp4_但Moov在尾部_转封装重排FastStart()
+    public void H264_Mp4_但Moov在尾部_重封装为分段Mp4()
     {
         var plan = TranscodePlan.Create(Media("h264"), Nvenc, isFastStart: false);
         Assert.Equal(PlanKind.Remux, plan.Kind);
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a copy", Args(plan));
-        Assert.Contains("-movflags +faststart", Args(plan));
+        // fMP4：moov 直接在头部，免 faststart 二次整文件重写
+        Assert.Contains("-movflags frag_keyframe+empty_moov+default_base_moof", Args(plan));
     }
 
     [Fact]
@@ -59,9 +60,30 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void H264_音频非Aac_音频转Aac_视频Copy()
+    public void H264_音频Eac3_音轨直接Copy()
     {
-        var plan = TranscodePlan.Create(Media("h264", audio: "ac3"), Nvenc, isFastStart: true);
+        // Chrome/Edge/Safari 都能解 MP4 里的 ec-3，不再转 AAC（省掉分钟级音频转码）
+        var plan = TranscodePlan.Create(Media("h264", audio: "eac3", container: "matroska,webm"), Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.Remux, plan.Kind);
+        Assert.Contains("-c:v copy", Args(plan));
+        Assert.Contains("-c:a copy", Args(plan));
+        // eac3 与 empty_moov 冲突（muxer 需先解析音帧）→ 用延迟 moov 的分段写法
+        Assert.Contains("-movflags frag_keyframe+default_base_moof", Args(plan));
+        Assert.DoesNotContain("empty_moov", Args(plan));
+    }
+
+    [Fact]
+    public void H264_音频Eac3_FastStartMp4_零处理直出()
+    {
+        var plan = TranscodePlan.Create(Media("h264", audio: "eac3"), Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.ServeOriginal, plan.Kind);
+        Assert.Empty(plan.OutputArgs);
+    }
+
+    [Fact]
+    public void H264_音频浏览器不能解_音频转Aac_视频Copy()
+    {
+        var plan = TranscodePlan.Create(Media("h264", audio: "dts"), Nvenc, isFastStart: true);
         Assert.Equal(PlanKind.Remux, plan.Kind);
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a aac", Args(plan));
@@ -199,5 +221,116 @@ public class TranscodePlanTests
         var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
         Assert.Contains("libx264", Args(plan));
         Assert.Empty(plan.EffectiveInputArgs);
+    }
+
+    // ── 强制转码策略（ForceGpu）──
+
+    [Fact]
+    public void 强制策略_直出文件也全转码()
+    {
+        // 原本「H.264 + AAC + MP4 + faststart」是零处理直出，强制策略下也必须重编码
+        var plan = TranscodePlan.Create(Media("h264"), Nvenc, isFastStart: true, TranscodePolicy.ForceGpu);
+        Assert.Equal(PlanKind.FullTranscode, plan.Kind);
+        Assert.Contains("h264_nvenc", Args(plan));
+        Assert.Contains("强制转码", plan.Explanation);
+        Assert.Equal(["-hwaccel", "cuda"], plan.EffectiveInputArgs);
+    }
+
+    [Fact]
+    public void 强制策略_无Gpu时回退软编()
+    {
+        var plan = TranscodePlan.Create(Media("h264"), Soft, isFastStart: true, TranscodePolicy.ForceGpu);
+        Assert.Equal(PlanKind.FullTranscode, plan.Kind);
+        Assert.Contains("libx264", Args(plan));
+        Assert.Empty(plan.EffectiveInputArgs);
+    }
+
+    [Fact]
+    public void 强制策略_过小视频仍回退软编()
+    {
+        var info = new MediaInfo
+        {
+            FileName = "tiny.mp4",
+            FormatName = Mp4,
+            DurationUs = 1_000_000,
+            Streams = [new VideoStreamInfo(0, "h264", "High", "yuv420p", 128, 72, 8)],
+        };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true, TranscodePolicy.ForceGpu);
+        Assert.Contains("libx264", Args(plan));
+        Assert.Empty(plan.EffectiveInputArgs);
+    }
+
+    [Fact]
+    public void 强制策略_纯音频不受影响()
+    {
+        var info = new MediaInfo
+        {
+            FileName = "song.aac",
+            FormatName = Mp4,
+            DurationUs = 60_000_000,
+            Streams = [new AudioStreamInfo(0, "aac", 44100, 2)],
+        };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true, TranscodePolicy.ForceGpu);
+        Assert.NotEqual(PlanKind.FullTranscode, plan.Kind);
+    }
+
+    [Fact]
+    public void 编码器优先级_Amf优先于Qsv_独显优先()
+    {
+        // 静态优先级 NVENC→AMF→QSV：N 卡必为独显，AMF 多为独显，QSV 基本是核显
+        var catalog = new EncoderCatalog(["h264_qsv", "h264_amf", "libx264"]);
+        Assert.Equal("h264_amf", catalog.PreferredH264Encoder);
+    }
+
+    // ── RequiresEncoder：与决策矩阵分支同步（决定要不要跑编码器探测）──
+
+    [Theory]
+    [InlineData("h264", 8, false)]    // 直出/Remux 捷径
+    [InlineData("hevc", 8, false)]    // hvc1 Remux
+    [InlineData("hevc", 10, false)]   // Main10 → hvc1 Remux
+    [InlineData("hevc", 12, true)]    // Main 12 → 全转码
+    [InlineData("av1", 8, true)]
+    [InlineData("vp9", 8, true)]
+    [InlineData("h264", 10, true)]    // Hi10P → 全转码
+    public void RequiresEncoder_与矩阵分支一致(string codec, int bitDepth, bool expected)
+    {
+        var profile = codec == "hevc" && bitDepth == 10 ? "Main 10"
+            : codec == "hevc" && bitDepth > 10 ? "Main 12"
+            : "High";
+        var pixFmt = bitDepth > 8 ? $"yuv420p{bitDepth}le" : "yuv420p";
+        var info = Media(codec, bitDepth: bitDepth, pixFmt: pixFmt, profile: profile);
+        Assert.Equal(expected, TranscodePlan.RequiresEncoder(info, TranscodePolicy.Auto));
+        // 与矩阵结果互相印证：不需要编码器 ⇔ 不是全转码
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Equal(expected, plan.Kind == PlanKind.FullTranscode);
+    }
+
+    [Fact]
+    public void RequiresEncoder_强制策略下有视频就需要()
+    {
+        Assert.True(TranscodePlan.RequiresEncoder(Media("h264"), TranscodePolicy.ForceGpu));
+    }
+
+    [Fact]
+    public void RequiresEncoder_纯音频不需要()
+    {
+        var info = new MediaInfo
+        {
+            FileName = "song.aac",
+            FormatName = Mp4,
+            DurationUs = 60_000_000,
+            Streams = [new AudioStreamInfo(0, "aac", 44100, 2)],
+        };
+        Assert.False(TranscodePlan.RequiresEncoder(info, TranscodePolicy.Auto));
+        Assert.False(TranscodePlan.RequiresEncoder(info, TranscodePolicy.ForceGpu));
+    }
+
+    [Fact]
+    public void HEVC_Main10_Remux不需要编码器()
+    {
+        var info = Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10");
+        Assert.False(TranscodePlan.RequiresEncoder(info, TranscodePolicy.Auto));
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.Remux, plan.Kind);
     }
 }

@@ -88,6 +88,22 @@ public class ServingTests
     }
 
     [Fact]
+    public async Task 品牌Logo_返回带Alpha的PNG与缓存头()
+    {
+        await using var server = await SessionServer.StartAsync(preferredPort: 18902);
+
+        using var client = new HttpClient();
+        var resp = await client.GetAsync($"http://localhost:{server.Port}/assets/pu-logo.png");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("image/png", resp.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("max-age=86400", resp.Headers.CacheControl?.ToString());
+        var body = await resp.Content.ReadAsByteArrayAsync();
+        Assert.Equal([0x89, 0x50, 0x4E, 0x47], body[..4]);
+        Assert.Equal(6, body[25]); // PNG IHDR color type 6 = RGBA
+    }
+
+    [Fact]
     public async Task 转码中_媒体返回409()
     {
         using var dir = new TempDir();

@@ -3,150 +3,186 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#f5f7fb">
+<meta name="description" content="pu~ 局域网视频播放页">
 <title>pu~</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%230a0e14'/%3E%3Cpath d='M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12' fill='none' stroke='%235eead4' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24.5' cy='9.5' r='1.7' fill='%235eead4'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="/assets/pu-logo.png">
 <style>
 :root{
-  --bg:#0a0e14;
-  --surface:#11161f;
-  --surface-2:#171e29;
-  --line:#212c3b;
-  --line-strong:#2e3c50;
-  --text:#e8eef6;
-  --text-2:#9fb0c3;
-  --text-3:#7c8ca0;
-  --mint:#5eead4;
-  --mint-ink:#0c2b23;
-  --amber:#f5b83d;
-  --red:#f87171;
+  --bg:#f5f7fb;
+  --surface:#ffffff;
+  --surface-2:#eef2f9;
+  --line:#dce3ee;
+  --line-strong:#c2cede;
+  --text:#1e2735;
+  --text-2:#4f5c72;
+  --text-3:#66738a;
+  --blue:#2f5bb5;
+  --blue-deep:#1d3f86;
+  --blue-hover:#3a6bc9;
+  --blue-soft:#e9effa;
+  --sky:#78bdf4;
+  --green:#2e9463;
+  --green-ink:#21724c;
+  --green-soft:#e4f4ec;
+  --amber-ink:#8a5a10;
+  --amber-soft:#fdf3e0;
+  --amber-line:#ecd9ae;
+  --red:#c02f47;
+  --red-soft:#fbeef0;
+  --red-line:#efc9cf;
+  --ease-out:cubic-bezier(.22,1,.36,1);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
   background:
-    radial-gradient(900px 380px at 85% -8%, rgba(94,234,212,.05), transparent 60%),
+    radial-gradient(700px 380px at -10% -8%, #e9eff9 0, transparent 62%),
+    radial-gradient(620px 420px at 110% 14%, #e7f0fb 0, transparent 64%),
     var(--bg);
   color:var(--text);
   font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   -webkit-font-smoothing:antialiased;
-  padding:max(22px,env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom));
-  max-width:520px;margin:0 auto;
-  display:flex;flex-direction:column;gap:14px;
+  padding:max(20px,env(safe-area-inset-top)) 18px calc(34px + env(safe-area-inset-bottom));
+  max-width:560px;margin:0 auto;
+  display:flex;flex-direction:column;gap:16px;
 }
 @media (min-width:600px){ body{ padding-top:48px } }
+::selection{background:rgba(47,91,181,.18)}
 
 /* ── header ── */
-header{display:flex;align-items:center;gap:11px}
-.logo{width:32px;height:32px;flex:none;filter:drop-shadow(0 2px 10px rgba(94,234,212,.25))}
-h1{font-size:17px;font-weight:700;letter-spacing:.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+header{display:flex;align-items:center;gap:13px;min-height:56px}
+.logo{width:56px;height:56px;flex:none;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(47,91,181,.16))}
+h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .pill{margin-left:auto;flex:none;display:flex;align-items:center;gap:7px;
-  font-size:12.5px;color:var(--text-2);border:1px solid var(--line);
-  border-radius:999px;padding:4px 12px;background:var(--surface)}
+  font-size:12.5px;font-weight:550;color:var(--text-2);border:1px solid var(--line);
+  border-radius:999px;padding:5px 12px;background:var(--surface);transition:color .25s,background .25s,border-color .25s}
 .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);transition:background .25s}
-.pill.busy .dot{background:var(--amber);animation:blink 1.1s ease-in-out infinite}
-.pill.ok{color:var(--mint);border-color:rgba(94,234,212,.35)}
-.pill.ok .dot{background:var(--mint)}
-.pill.bad{color:var(--red);border-color:rgba(248,113,113,.35)}
+.pill.busy{color:var(--blue-deep);background:var(--blue-soft);border-color:#cddbf2}
+.pill.busy .dot{background:var(--blue);animation:blink 1.1s ease-in-out infinite}
+.pill.ok{color:var(--green-ink);border-color:#c8e5d6;background:var(--green-soft)}
+.pill.ok .dot{background:var(--green)}
+.pill.bad{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
 .pill.bad .dot{background:var(--red)}
 @keyframes blink{50%{opacity:.25}}
 
 /* ── cards ── */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:22px 20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:24px 22px;
+  box-shadow:0 18px 48px rgba(35,55,95,.08)}
 .hidden{display:none!important}
-.stage{animation:fadein .25s ease-out}
-@keyframes fadein{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.stage{animation:enter .28s var(--ease-out)}
+@keyframes enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion: reduce){
   .pill.busy .dot{animation:none}
   .stage{animation:none}
+  #barFill{transition:none}
+  .bar::after{display:none}
 }
 
 /* ── QR ── */
-#qrCard{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
-.qr-frame{position:relative;background:#fff;border-radius:14px;padding:13px;
-  box-shadow:0 12px 40px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.06)}
-.qr-frame::before,.qr-frame::after{content:"";position:absolute;width:22px;height:22px;border:3px solid var(--mint);border-radius:4px}
-.qr-frame::before{top:7px;left:7px;border-right:0;border-bottom:0}
-.qr-frame::after{bottom:7px;right:7px;border-left:0;border-top:0}
-#qr{width:196px;height:196px;display:block;image-rendering:pixelated;border-radius:6px}
+#qrCard{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center}
+.qr-frame{position:relative;background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;
+  box-shadow:0 16px 38px rgba(47,91,181,.12)}
+.qr-frame .corner{position:absolute;width:20px;height:20px;border:2.5px solid var(--blue);pointer-events:none}
+.qr-frame .corner.tl{top:-5px;left:-5px;border-right:0;border-bottom:0;border-top-left-radius:9px}
+.qr-frame .corner.tr{top:-5px;right:-5px;border-left:0;border-bottom:0;border-top-right-radius:9px}
+.qr-frame .corner.bl{bottom:-5px;left:-5px;border-right:0;border-top:0;border-bottom-left-radius:9px}
+.qr-frame .corner.br{bottom:-5px;right:-5px;border-left:0;border-top:0;border-bottom-right-radius:9px}
+#qr{width:204px;height:204px;display:block;image-rendering:pixelated;border-radius:8px}
 .qr-hint{font-size:13px;color:var(--text-2)}
-.url{font-size:12px;color:var(--text-3);word-break:break-all;user-select:all;
-  background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;max-width:100%}
+.url{font:11.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--text-3);word-break:break-all;user-select:all;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:8px 13px;max-width:100%}
+.url:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 #planText{font-size:12.5px;color:var(--text-3)}
 
 /* ── progress ── */
-#pct{font-size:34px;font-weight:800;text-align:center;letter-spacing:-.5px;
-  font-variant-numeric:tabular-nums;line-height:1.1}
-.bar{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:16px 0 10px}
-#barFill{height:100%;width:0%;border-radius:99px;
-  background:linear-gradient(90deg,#2fb89c,var(--mint));
-  box-shadow:0 0 12px rgba(94,234,212,.35);
-  transition:width .35s ease-out}
+#pct{font-size:38px;font-weight:750;text-align:center;letter-spacing:-1px;color:var(--blue-deep);
+  font-variant-numeric:tabular-nums;line-height:1.15}
+.bar{position:relative;height:8px;border-radius:99px;background:var(--surface-2);
+  border:1px solid var(--line);overflow:hidden;margin:16px 0 10px}
+#barFill{height:100%;width:0%;border-radius:99px;background:var(--blue);
+  transition:width .35s var(--ease-out)}
+.bar.indet::after{content:"";position:absolute;inset:0;width:38%;border-radius:99px;
+  background:linear-gradient(90deg,transparent,rgba(47,91,181,.35),transparent);
+  animation:sweep 1.3s ease-in-out infinite}
+@keyframes sweep{from{left:-40%}to{left:104%}}
+.bar.indet::after{left:-40%}
 .prog-hint{font-size:12.5px;color:var(--text-3);text-align:center}
 
 /* ── player ── */
-#playerCard{padding:14px}
-.playerWrap{position:relative;border-radius:13px;overflow:hidden;background:#000;
+#playerCard{padding:12px}
+.playerWrap{position:relative;border-radius:16px;overflow:hidden;background:#0f1626;
   aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
 video{width:100%;height:100%;display:block;outline:none}
 .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(4,7,10,.5);transition:opacity .25s}
+  background:rgba(8,12,22,.55);transition:opacity .25s}
 .overlay.hidden{opacity:0;pointer-events:none}
-#loadingText{font-size:13px;color:var(--text-2);letter-spacing:2px}
-#playBtn{display:flex;align-items:center;justify-content:center;width:64px;height:64px;border:0;cursor:pointer;
-  background:var(--mint);color:var(--mint-ink);border-radius:50%;
-  font-size:22px;box-shadow:0 8px 30px rgba(94,234,212,.3);transition:transform .15s ease-out, box-shadow .2s}
-#playBtn:hover{transform:scale(1.06);box-shadow:0 10px 36px rgba(94,234,212,.42)}
+#loadingText{display:flex;align-items:center;gap:10px;font-size:13px;color:#c9d4e6;letter-spacing:1px}
+.spinner{width:16px;height:16px;border-radius:50%;flex:none;
+  border:2px solid rgba(201,212,230,.3);border-top-color:#c9d4e6;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){ .spinner{animation-duration:1.6s} }
+#playBtn{display:flex;align-items:center;justify-content:center;width:68px;height:68px;border:0;cursor:pointer;
+  background:var(--blue);color:#fff;border-radius:50%;
+  box-shadow:0 10px 30px rgba(23,52,112,.45),inset 0 1px 0 rgba(255,255,255,.25);
+  transition:transform .15s var(--ease-out),background .2s,box-shadow .2s}
+#playBtn svg{width:24px;height:24px;margin-left:3px;fill:currentColor}
+#playBtn:hover{transform:scale(1.06);background:var(--blue-hover)}
 #playBtn:active{transform:scale(.97)}
-#playBtn:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
+#playBtn:focus-visible{outline:3px solid var(--sky);outline-offset:3px}
 #subsRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
 #subsRow button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);
   border-radius:999px;padding:5px 15px;font-size:13px;cursor:pointer;font-family:inherit;
-  transition:background .15s, color .15s, border-color .15s}
+  transition:background .15s,color .15s,border-color .15s}
 #subsRow button:hover{border-color:var(--line-strong);color:var(--text)}
-#subsRow button.on{background:var(--mint);border-color:var(--mint);color:var(--mint-ink);font-weight:600}
-#subsRow button:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+#subsRow button.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+#subsRow button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
 /* ── error ── */
-#errorCard{display:flex;gap:12px;align-items:flex-start;color:var(--red);
-  border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}
-#errorCard .err-ico{font-size:18px;line-height:1.4}
-#errorCard p{font-size:13.5px;line-height:1.7}
-#errorCard .err-sub{display:block;margin-top:4px;font-size:12px;color:var(--text-3)}
+#errorCard{display:flex;gap:13px;align-items:flex-start;color:var(--red);
+  border-color:var(--red-line);background:var(--red-soft);box-shadow:none}
+#errorCard .err-ico{flex:none;display:flex;align-items:center;justify-content:center;
+  width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--red-line)}
+#errorCard .err-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+#errorCard p{font-size:13.5px;line-height:1.7;padding-top:4px}
 </style>
 </head>
 <body>
 <header>
-  <svg class="logo" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="8" fill="#11161f"/><path d="M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12" fill="none" stroke="#5eead4" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="9.5" r="1.7" fill="#5eead4"/></svg>
+  <img class="logo" src="/assets/pu-logo.png" alt="pu~">
   <h1 id="title">pu~</h1>
-  <span class="pill" id="pill"><span class="dot"></span><span id="pillText">连接中</span></span>
+  <span class="pill" id="pill" aria-live="polite"><span class="dot"></span><span id="pillText">连接中</span></span>
 </header>
 
 <!-- 扫码入口：转码期间一直可见 -->
 <section class="card stage" id="qrCard">
-  <div class="qr-frame"><img id="qr" alt="二维码"></div>
-  <div class="qr-hint">手机 / 平板扫码，同一 Wi-Fi 即开即播</div>
-  <div class="url" id="urlText"></div>
+  <div class="qr-frame">
+    <img id="qr" alt="手机扫码打开的二维码">
+    <i class="corner tl" aria-hidden="true"></i><i class="corner tr" aria-hidden="true"></i>
+    <i class="corner bl" aria-hidden="true"></i><i class="corner br" aria-hidden="true"></i>
+  </div>
+  <div class="qr-hint">手机或平板扫一扫 · 同一 Wi-Fi</div>
+  <div class="url" id="urlText" tabindex="0"></div>
   <div id="planText"></div>
 </section>
 
 <section class="card stage hidden" id="progressCard">
   <div id="pct">0%</div>
-  <div class="bar"><div id="barFill"></div></div>
+  <div class="bar indet" id="bar"><div id="barFill"></div></div>
   <div class="prog-hint" id="progHint">正在准备…</div>
 </section>
 
 <section class="card stage hidden" id="playerCard">
   <div class="playerWrap">
     <video id="v" controls playsinline preload="auto"></video>
-    <div class="overlay hidden" id="loadingOverlay"><span id="loadingText">准备播放…</span></div>
-    <div class="overlay hidden" id="playOverlay"><button id="playBtn" aria-label="播放">▶</button></div>
+    <div class="overlay hidden" id="loadingOverlay"><span id="loadingText"><span class="spinner" aria-hidden="true"></span>准备播放…</span></div>
+    <div class="overlay hidden" id="playOverlay"><button id="playBtn" aria-label="播放"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13c0 .9 1 1.5 1.8 1L20.4 13a1.2 1.2 0 0 0 0-2L9.8 4.5c-.8-.5-1.8.1-1.8 1z"/></svg></button></div>
   </div>
   <div id="subsRow"></div>
 </section>
 
 <section class="card stage hidden" id="errorCard">
-  <span class="err-ico">⚠</span>
+  <span class="err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg></span>
   <p id="errorText">处理失败。</p>
 </section>
 
@@ -158,7 +194,7 @@ video{width:100%;height:100%;display:block;outline:none}
   var title=$('title'), pill=$('pill'), pillText=$('pillText'), planText=$('planText'),
       qrCard=$('qrCard'), progressCard=$('progressCard'), playerCard=$('playerCard'),
       errorCard=$('errorCard'), errorText=$('errorText'),
-      pct=$('pct'), barFill=$('barFill'), progHint=$('progHint'),
+      pct=$('pct'), bar=$('bar'), barFill=$('barFill'), progHint=$('progHint'),
       video=$('v'), subsRow=$('subsRow'),
       loadingOverlay=$('loadingOverlay'), playOverlay=$('playOverlay'),
       playBtn=$('playBtn'), urlText=$('urlText');
@@ -184,6 +220,7 @@ video{width:100%;height:100%;display:block;outline:none}
       show(qrCard); show(progressCard); hide(playerCard); hide(errorCard);
       var p = Math.round((st.progress || 0) * 100);
       barFill.style.width = p + '%';
+      bar.classList.toggle('indet', p < 2);
       pct.textContent = p + '%';
       progHint.textContent = st.plan || '正在转码…';
       if (!timer) timer = setInterval(tick, 800);

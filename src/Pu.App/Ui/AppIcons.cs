@@ -11,13 +11,18 @@ public static class AppIcons
     {
         var dest = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu", "pu.ico");
-        if (!File.Exists(dest))
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+
+        using var src = typeof(AppIcons).Assembly.GetManifestResourceStream("pu.ico")
+            ?? throw new InvalidOperationException("缺少嵌入的 pu.ico");
+        using var buffer = new MemoryStream();
+        src.CopyTo(buffer);
+        var embedded = buffer.ToArray();
+
+        // 只在内容变化时覆盖，避免升级后继续使用旧图标缓存。
+        if (!File.Exists(dest) || !File.ReadAllBytes(dest).AsSpan().SequenceEqual(embedded))
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            using var src = typeof(AppIcons).Assembly.GetManifestResourceStream("pu.ico")
-                ?? throw new InvalidOperationException("缺少嵌入的 pu.ico");
-            using var file = File.Create(dest);
-            src.CopyTo(file);
+            File.WriteAllBytes(dest, embedded);
         }
         return dest;
     }

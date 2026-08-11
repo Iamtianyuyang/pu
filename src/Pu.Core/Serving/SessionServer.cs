@@ -12,6 +12,7 @@ using Pu.Core.Pipeline;
 using Pu.Core.Planning;
 using Pu.Core.Probe;
 using QRCoder;
+using Pu.Core.Common;
 
 namespace Pu.Core.Serving;
 
@@ -115,6 +116,12 @@ public sealed class SessionServer : IAsyncDisposable
                 : Results.File(sub.VttPath, "text/vtt; charset=utf-8");
         });
 
+        app.MapGet("/assets/pu-logo.png", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "public, max-age=86400";
+            return Results.Bytes(EmbeddedWeb.LogoPng, "image/png");
+        });
+
         app.MapGet("/", () => Results.Text("pu~ is running"));
 
         // ── 文件夹模式：列表页 / 状态轮询 / 点开文件 ──
@@ -149,12 +156,22 @@ public sealed class SessionServer : IAsyncDisposable
     public async Task<MediaJob> SubmitAsync(string sourcePath, CancellationToken ct = default)
     {
         var info = await MediaProbe.ProbeAsync(sourcePath, ct);
-        var plan = TranscodePlan.Create(info, await Catalog.Value, sourcePath);
+        var policy = PuConfig.TranscodePolicy;
+        // 只有会走进全转码分支的文件才需要编码器目录（探测要跑 ffmpeg -encoders + 硬件实测）；
+        // 直出/Remux 直接跳过，窗口立刻有内容
+        var needsEncoder = TranscodePlan.RequiresEncoder(info, policy);
+        var catalog = needsEncoder ? await Catalog.Value : null;
+        var plan = TranscodePlan.Create(info, catalog ?? EncoderCatalog.SoftwareOnly, sourcePath, policy);
         if (plan.Kind == PlanKind.Unsupported)
             throw new InvalidOperationException(plan.Explanation);
 
         var passthrough = plan.Kind == PlanKind.ServeOriginal;
-        var artifactDir = passthrough ? Path.GetDirectoryName(sourcePath)! : CacheKey.ArtifactDirFor(sourcePath);
+        var artifactDir = passthrough
+            ? Path.GetDirectoryName(sourcePath)!
+            : CacheKey.ArtifactDirFor(sourcePath,
+                policy == TranscodePolicy.ForceGpu && info.Video is not null
+                    ? $"gpu:{catalog!.PreferredH264Encoder}" // 与「尽可能不转」时代的 copy 产物隔离
+                    : null);
         var artifact = passthrough ? sourcePath : Path.Combine(artifactDir, $"out.{plan.OutputExtension}");
         var contentType = passthrough
             ? ContentTypes.ForMedia(sourcePath)

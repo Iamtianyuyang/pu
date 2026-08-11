@@ -51,7 +51,18 @@ public class FolderServingTests
         var mediaUrl = openDoc.RootElement.GetProperty("url").GetString();
         Assert.Contains($"/s/", mediaUrl);
 
-        // 4. 媒体可播（faststart mp4 → ServeOriginal，直接 200）
+        // 4. 默认策略（强制转码）下等转码完成 → 媒体可播
+        var served = false;
+        for (var i = 0; i < 120; i++)
+        {
+            var s = await client.GetAsync(mediaUrl + "/status");
+            using var sd = JsonDocument.Parse(await s.Content.ReadAsStringAsync());
+            var state = sd.RootElement.GetProperty("state").GetString();
+            if (state == "serving") { served = true; break; }
+            if (state == "failed") break;
+            await Task.Delay(250);
+        }
+        Assert.True(served, "转码未在 30s 内完成");
         var media = await client.GetAsync(mediaUrl + "/media");
         Assert.Equal(HttpStatusCode.OK, media.StatusCode);
 

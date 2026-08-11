@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>pu</AssemblyName>
     <RootNamespace>Pu.App</RootNamespace>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- 原生窗口模式：不弹控制台（命令模式会临时分配） -->
+    <!-- WPF 字体排版需要完整 CultureInfo；invariant 模式会在首次显示窗口时崩溃。 -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- WPF 桌面模式：不弹控制台（命令模式会临时分配） -->
     <OutputType>WinExe</OutputType>
     <!-- 应用本身就是 Windows 专用（右键菜单/托盘/注册表），避免 CA1416 平台噪音 -->
     <SupportedOSPlatform>windows</SupportedOSPlatform>
@@ -15,20 +17,17 @@
     <StripSymbols>true</StripSymbols>
     <!-- 托盘与右键菜单图标：嵌入 exe（右键菜单 Icon= 值指向 exe,0） -->
     <ApplicationIcon>..\..\assets\pu.ico</ApplicationIcon>
-    <!-- M4 目标：NativeAOT 单 exe。PublishAot 只影响 dotnet publish，不影响 build/run -->
-    <PublishAot>true</PublishAot>
+    <!-- WPF 不支持 NativeAOT；使用自包含单文件发布，目标机器无需预装 .NET。 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Pu.Core\Pu.Core.csproj" />
     <EmbeddedResource Include="..\..\assets\pu.ico" LogicalName="pu.ico" />
-    <!-- 自绘窗口：GDI+（WinForms/WPF 不支持 NativeAOT，自绘方案完全 AOT 兼容） -->
-    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
-    <!-- NativeAOT 裁剪修复（dotnet/aspnetcore 已知坑）：
-         1. RequestDelegateFactory 运行时用表达式树查找 StringValues→string 强制转换 → 根 Primitives
-         2. 引用程序集中的 async 路由（Task<IResult>）在裁剪后丢失 awaitable 辅助代码 → 根 Http.Extensions -->
-    <TrimmerRootAssembly Include="Microsoft.Extensions.Primitives" />
-    <TrimmerRootAssembly Include="Microsoft.AspNetCore.Http.Extensions" />
+    <Resource Include="..\..\assets\pu.ico" Link="Assets\pu.ico" />
+    <Resource Include="..\..\assets\pu-logo.png" Link="Assets\pu-logo.png" />
   </ItemGroup>
 
 </Project>

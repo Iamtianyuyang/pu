@@ -1,3 +1,4 @@
+using System.Globalization;
 using Pu.Core.Common;
 using Pu.Core.Planning;
 
@@ -52,8 +53,27 @@ public static class Transcoder
         double lastReported = -1;
         return await ProcessRunner.RunAsync(FfmpegLocator.Exe, args, onStdoutLine: line =>
         {
-            if (!line.StartsWith("out_time_us=", StringComparison.Ordinal)) return;
-            if (!long.TryParse(line.AsSpan("out_time_us=".Length), out var us) || totalDurationUs <= 0) return;
+            // 新版 ffmpeg 输出 out_time_us（微秒）；旧版只有 out_time_ms（历史遗留，单位实为微秒）；
+            // 再兜一层 out_time（HH:MM:SS.ffffff）。三者任一解析成功即上报进度。
+            long us;
+            if (line.StartsWith("out_time_us=", StringComparison.Ordinal))
+            {
+                if (!long.TryParse(line.AsSpan("out_time_us=".Length), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out us)) return;
+            }
+            else if (line.StartsWith("out_time_ms=", StringComparison.Ordinal))
+            {
+                if (!long.TryParse(line.AsSpan("out_time_ms=".Length), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out us)) return;
+            }
+            else if (line.StartsWith("out_time=", StringComparison.Ordinal))
+            {
+                if (!TimeSpan.TryParse(line.AsSpan("out_time=".Length), CultureInfo.InvariantCulture, out var ts)) return;
+                us = Math.Max(0, (long)ts.TotalMicroseconds);
+            }
+            else return;
+
+            if (totalDurationUs <= 0) return;
             var fraction = Math.Clamp((double)us / totalDurationUs, 0.0, 1.0);
             if (fraction < 1 && fraction - lastReported < 0.01) return; // 限频：1% 粒度
             lastReported = fraction;
