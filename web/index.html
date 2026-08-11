@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1319">
+<title>pu~</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%230e1319'/%3E%3Cpath d='M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12' fill='none' stroke='%2363e6be' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='24.5' cy='9.5' r='1.7' fill='%2363e6be'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0e1319; --panel:#151c24; --panel2:#1b2430; --line:#26303c;
+  --text:#e9eef4; --dim:#93a1b0; --mint:#63e6be; --mint-dim:#2fae8c;
+  --red:#ff7a7a; --amber:#f0b429;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:radial-gradient(1100px 460px at 85% -10%, rgba(99,230,190,.07), transparent 60%), var(--bg);
+  color:var(--text);
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  padding:max(20px,env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+  max-width:580px;margin:0 auto;
+  display:flex;flex-direction:column;gap:16px;
+}
+header{display:flex;align-items:center;gap:10px}
+.logo{width:30px;height:30px;flex:none}
+h1{font-size:18px;font-weight:700;letter-spacing:.5px}
+.pill{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);
+  border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--panel)}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.pill.busy .dot{background:var(--amber);animation:pulse 1.2s infinite}
+.pill.ok .dot{background:var(--mint)}
+.pill.bad .dot{background:var(--red)}
+@keyframes pulse{50%{opacity:.3}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+#qrCard{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+#qr{width:204px;height:204px;border-radius:10px;background:#fff;padding:10px;image-rendering:pixelated}
+.url{font-size:12px;color:var(--dim);word-break:break-all;user-select:all}
+.hint{font-size:12px;color:var(--dim)}
+#planText{font-size:13px;color:var(--dim)}
+.bar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;margin:14px 0 10px}
+#barFill{height:100%;width:0%;border-radius:99px;
+  background:linear-gradient(90deg,var(--mint-dim),var(--mint));transition:width .4s ease}
+#pct{font-size:30px;font-weight:800;text-align:center;font-variant-numeric:tabular-nums}
+.playerWrap{position:relative}
+video{width:100%;border-radius:12px;background:#000;aspect-ratio:16/9;display:block;outline:none}
+.playOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(5,8,11,.45);border-radius:12px}
+#playBtn{border:0;cursor:pointer;display:flex;align-items:center;gap:8px;
+  background:var(--mint);color:#06231b;font:inherit;font-weight:700;
+  padding:12px 26px;border-radius:999px;box-shadow:0 8px 30px rgba(99,230,190,.25)}
+#subsRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#subsRow button{border:1px solid var(--line);background:var(--panel2);color:var(--dim);
+  border-radius:999px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit}
+#subsRow button.on{color:#06231b;background:var(--mint);border-color:var(--mint);font-weight:600}
+#errorCard{color:var(--red);font-size:14px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <svg class="logo" viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="8" fill="#151c24"/><path d="M7 13c1-4 4.5-6.5 9-6.5 5 0 9 3.5 9 8 0 4.5-3.5 8-8.5 8H12" fill="none" stroke="#63e6be" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="9.5" r="1.7" fill="#63e6be"/></svg>
+  <h1>pu~</h1>
+  <span class="pill" id="pill"><span class="dot"></span><span id="pillText">连接中</span></span>
+</header>
+
+<section class="card" id="qrCard">
+  <img id="qr" alt="二维码">
+  <div class="hint">手机 / 平板扫码，同 Wi-Fi 即开即播</div>
+  <div class="url" id="urlText"></div>
+  <div id="planText"></div>
+</section>
+
+<section class="card hidden" id="progressCard">
+  <div id="pct">0%</div>
+  <div class="bar"><div id="barFill"></div></div>
+  <div class="hint" style="text-align:center">转码完成后自动开始播放，稍等</div>
+</section>
+
+<section class="card hidden" id="playerCard">
+  <div class="playerWrap">
+    <video id="v" controls playsinline preload="auto"></video>
+    <div class="playOverlay hidden" id="playOverlay"><button id="playBtn">▶ 播放</button></div>
+  </div>
+  <div id="subsRow"></div>
+</section>
+
+<section class="card hidden" id="errorCard"></section>
+
+<script>
+(function(){
+  var token = location.pathname.split('/')[2];
+  if (!token) { document.body.innerHTML = '<p>链接无效</p>'; return; }
+  var $ = function(id){ return document.getElementById(id); };
+  var qr=$('qr'), pill=$('pill'), pillText=$('pillText'), planText=$('planText'),
+      qrCard=$('qrCard'), progressCard=$('progressCard'), playerCard=$('playerCard'),
+      errorCard=$('errorCard'), pct=$('pct'), barFill=$('barFill'),
+      video=$('v'), subsRow=$('subsRow'), overlay=$('playOverlay'), playBtn=$('playBtn'), urlText=$('urlText');
+
+  urlText.textContent = location.href;
+  qr.src = '/s/' + token + '/qr.png?u=' + encodeURIComponent(location.href);
+
+  var timer = null;
+  function show(el){ el.classList.remove('hidden'); }
+  function hide(el){ el.classList.add('hidden'); }
+  function setPill(t, cls){ pillText.textContent = t; pill.className = 'pill' + (cls ? ' ' + cls : ''); }
+
+  function render(st){
+    document.title = (st.title || 'pu~') + ' · pu~';
+    planText.textContent = st.plan || '';
+    if (st.state === 'transcoding'){
+      setPill('转码中', 'busy');
+      hide(qrCard); show(progressCard); hide(playerCard); hide(errorCard);
+      var p = Math.round((st.progress || 0) * 100);
+      barFill.style.width = p + '%';
+      pct.textContent = p + '%';
+      if (!timer) timer = setInterval(tick, 800);
+    } else if (st.state === 'serving'){
+      setPill('就绪', 'ok');
+      hide(qrCard); hide(progressCard); hide(errorCard); show(playerCard);
+      if (timer){ clearInterval(timer); timer = null; }
+      if (!video.src){
+        buildSubs(st.subtitles || []);
+        video.src = '/s/' + token + '/media';
+        video.play().catch(function(){ show(overlay); });
+      }
+    } else {
+      setPill('失败', 'bad');
+      hide(qrCard); hide(progressCard); hide(playerCard); show(errorCard);
+      errorCard.textContent = '处理失败：' + (st.error || '未知错误');
+      if (timer){ clearInterval(timer); timer = null; }
+    }
+  }
+
+  function buildSubs(list){
+    subsRow.innerHTML = '';
+    list.forEach(function(s, i){
+      var t = document.createElement('track');
+      t.kind = 'subtitles';
+      t.label = s.label || ('字幕 ' + (i + 1));
+      if (s.language) t.srclang = s.language;
+      t.src = '/s/' + token + '/sub/' + s.index;
+      t.mode = 'disabled';
+      video.appendChild(t);
+      var b = document.createElement('button');
+      b.textContent = t.label;
+      b.addEventListener('click', function(){ selectSub(i); });
+      subsRow.appendChild(b);
+    });
+    subsRow.style.display = list.length ? '' : 'none';
+  }
+
+  function selectSub(i){
+    var tracks = video.textTracks;
+    for (var j = 0; j < tracks.length; j++) tracks[j].mode = (j === i) ? 'showing' : 'disabled';
+    Array.prototype.forEach.call(subsRow.children, function(b, j){ b.classList.toggle('on', j === i); });
+  }
+
+  playBtn.addEventListener('click', function(){
+    hide(overlay);
+    video.play().catch(function(){});
+  });
+
+  function tick(){
+    fetch('/s/' + token + '/status', { cache:'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(render)
+      .catch(function(){ setPill('连接中断', ''); });
+  }
+  tick();
+})();
+</script>
+</body>
+</html>
