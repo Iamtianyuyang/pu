@@ -5,7 +5,7 @@ namespace Pu.Core.Serving;
 /// <summary>状态页轮询的 JSON（/s/{token}/status）。source-gen 保证 NativeAOT 可用。</summary>
 public sealed record JobStatusDto(
     string State, double Progress, string? Error, string Title, string Plan, string Source,
-    IReadOnlyList<SubtitleDto> Subtitles);
+    IReadOnlyList<SubtitleDto> Subtitles, bool Hls);
 
 public sealed record SubtitleDto(int Index, string Codec, string Language, string Title, string? Label);
 

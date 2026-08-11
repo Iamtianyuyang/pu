@@ -25,6 +25,9 @@ public sealed class MediaJob
     public required string SourceDescription { get; init; }
     public required string ArtifactPath { get; init; }
     public required string ContentType { get; init; }
+
+    /// <summary>HLS 产物（m3u8 + 分片目录）：页面走 hls.js / Safari 原生。</summary>
+    public bool IsHls { get; init; }
     public required string PlanExplanation { get; init; }
 
     public JobState State { get { lock (_gate) return _state; } }

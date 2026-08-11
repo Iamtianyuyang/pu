@@ -32,13 +32,24 @@ public sealed record TranscodePlan(
 {
     public string[] EffectiveInputArgs => InputArgs ?? [];
 
+    /// <summary>HLS 产物（m3u8 + 分片目录）：Remux/全转码都走，浏览器拿到首分片即播。</summary>
+    public bool Hls { get; init; }
+
+    /// <summary>HLS 产物：m3u8 引用同目录分片，RelativeSegments 占位由 Transcoder 展开。</summary>
+    public static readonly string[] HlsOutputArgs =
+    ["-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod", "-hls_list_size", "0"];
+
     /// <summary>
     /// 产物格式版本：改封装参数（如 movflags）时 +1，调用方把它编进缓存变体，
     /// 让旧参数产出的缓存/就地产物自动失效重转。
     /// v1: Remux 用 empty_moov（Chromium 系 progressive 播放不起，canplay 不触发）
-    /// v2: Remux 统一 default_base_moof（moov 带完整轨道信息，实测 Edge 可播可拖）
+    /// v2: Remux 统一 default_base_moof（moov 完整了，但 Chromium 渐进播放不吃 fMP4：
+    ///     整文件顺序下完才播 —— 手机 Wi-Fi 下就是「一直转圈」）
+    /// v3: Remux 回到常规 MP4 + faststart（moov 在头部，全浏览器拿到开头就开播）
+    /// v4: Remux/全转码产物改为 HLS（m3u8 + TS 分片）——渐进 MP4 在旧版 Chrome 上
+    ///     仍整文件下载；HLS 拿到首分片即播，Safari 原生、其余 hls.js
     /// </summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 4;
 
     /// <summary>
     /// 这个文件按矩阵走是否会进入全转码分支（即需要硬件编码器目录）。
@@ -99,19 +110,19 @@ public sealed record TranscodePlan(
         if (video.Codec == "h264" && is8Bit && isMp4Family && audioCopyable && isFastStart)
             return new TranscodePlan(PlanKind.ServeOriginal, "H.264 + 可播音轨 + MP4 已 faststart，原样直出，零处理", [], "mp4");
 
-        // ── 2. H.264 8bit：视频 copy，只补容器 / 音频 / faststart ──
+        // ── 2. H.264 8bit：视频 copy，只补容器 / 音频 ──
         if (video.Codec == "h264" && is8Bit)
         {
             var args = BuildMaps(info);
             args.AddRange(["-c:v", "copy"]);
             AddAudio(args, info, audioCopyable);
-            args.AddRange(["-movflags", MovflagsForRemux(info)]);
+            args.AddRange(HlsOutputArgs);
             var why = !isMp4Family
-                ? "容器非 MP4，转封装为 MP4（视频 copy）"
+                ? "容器非 MP4，转封装为 HLS（视频 copy）"
                 : !audioCopyable
                     ? $"音频 {info.Audio!.Codec} 需转 AAC，视频 copy"
-                    : "moov 在文件尾部，重封装为 fMP4（视频 copy）";
-            return new TranscodePlan(PlanKind.Remux, why, args.ToArray(), "mp4");
+                    : "moov 在文件尾部，重封装为 HLS（视频 copy）";
+            return new TranscodePlan(PlanKind.Remux, why, args.ToArray(), "mp4.hls") { Hls = true };
         }
 
         // ── 3. HEVC 8bit / Main10：视频 copy + tag 改 hvc1（Safari/iOS 原生支持，方案.md 第五节）──
@@ -121,9 +132,9 @@ public sealed record TranscodePlan(
             var args = BuildMaps(info);
             args.AddRange(["-c:v", "copy", "-tag:v", "hvc1"]);
             AddAudio(args, info, audioCopyable);
-            args.AddRange(["-movflags", MovflagsForRemux(info)]);
+            args.AddRange(HlsOutputArgs);
             return new TranscodePlan(PlanKind.Remux,
-                $"HEVC {video.Profile} 视频 copy，codec tag 改 hvc1（Safari 必需）", args.ToArray(), "mp4");
+                $"HEVC {video.Profile} 视频 copy，重封装为 HLS（Safari 必需）", args.ToArray(), "mp4.hls") { Hls = true };
         }
 
         // ── 4. 全转码：HEVC 10bit / Hi10P / AV1 / VP9 / 其它 ──
@@ -141,7 +152,7 @@ public sealed record TranscodePlan(
         full.AddRange(EncoderCatalog.ArgsFor(enc));
         full.AddRange(["-tag:v", "avc1"]);
         AddAudio(full, info, audioCopyable);
-        full.AddRange(["-movflags", "+faststart"]);
+        full.AddRange(HlsOutputArgs);
         // 硬件编码器配硬件解码（失败时 Transcoder 自动软解回退）
         var hwaccel = EncoderCatalog.HwaccelFor(enc);
         var inputArgs = hwaccel is null ? [] : new[] { "-hwaccel", hwaccel };
@@ -149,7 +160,7 @@ public sealed record TranscodePlan(
         var explanation = forced
             ? $"强制转码 {video.Codec} → H.264（{how}）"
             : $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{how}）";
-        return new TranscodePlan(PlanKind.FullTranscode, explanation, full.ToArray(), "mp4", inputArgs);
+        return new TranscodePlan(PlanKind.FullTranscode, explanation, full.ToArray(), "mp4.hls", inputArgs) { Hls = true };
     }
 
     private static List<string> BuildMaps(MediaInfo info)
@@ -160,13 +171,9 @@ public sealed record TranscodePlan(
     }
 
     /// <summary>
-    /// Remux 产物用分段 MP4（moov 随首分片落盘，免 faststart 二次整文件重写）。
-    /// 不能加 empty_moov：① E-AC-3/AC-3 报错（muxer 要先解析音帧才写得出 ec-3/ac-3 描述）；
-    /// ② Chromium 系对 empty_moov 的 progressive fMP4 不起播（readyState 恒 0）。
+    /// Remux/转码产物统一走 HLS（m3u8 + TS 分片）：浏览器拿到首个分片即播，
+    /// 不受 moov/Range/渐进解析影响；iPhone Safari 原生支持，其余用 hls.js。
     /// </summary>
-    private static string MovflagsForRemux(MediaInfo info)
-        => "frag_keyframe+default_base_moof";
-
     private static void AddAudio(List<string> args, MediaInfo info, bool audioCopyable)
     {
         if (info.Audio is null) return;

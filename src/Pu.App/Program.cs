@@ -58,6 +58,7 @@ public static class Program
             var ipcTask = IpcHub.ServeAsync(inbox, cts.Token);
 
             var server = await SessionServer.StartAsync(ct: cts.Token);
+            SessionServer.LogSink = Log.Info; // 请求级诊断进 pu.log
             Log.Info($"服务已启动，端口 {server.Port}");
 
             // WPF 主窗口（专用 STA UI 线程）

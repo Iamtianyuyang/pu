@@ -21,17 +21,18 @@ public static class Transcoder
         CancellationToken ct = default)
     {
         var result = await RunFfmpegAsync(input, plan.EffectiveInputArgs, plan.OutputArgs,
-            outputPath, plan.OutputExtension, totalDurationUs, progress, ct);
+            outputPath, plan, totalDurationUs, progress, ct);
         if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0)
         {
             // 硬件解码失败（驱动/格式不支持）→ 纯软件解码重试一次
             result = await RunFfmpegAsync(input, [], plan.OutputArgs,
-                outputPath, plan.OutputExtension, totalDurationUs, progress, ct);
+                outputPath, plan, totalDurationUs, progress, ct);
         }
 
         if (result.ExitCode != 0)
         {
             TryDelete(outputPath);
+            if (plan.Hls) TryDelete(Path.GetDirectoryName(outputPath)!); // 临时目录整删
             throw new InvalidOperationException($"ffmpeg 失败: {Trim(result.StdErr)}");
         }
 
@@ -41,7 +42,7 @@ public static class Transcoder
 
     private static async Task<ProcessResult> RunFfmpegAsync(
         string input, string[] inputArgs, string[] outputArgs, string outputPath,
-        string outputExtension, long totalDurationUs,
+        TranscodePlan plan, long totalDurationUs,
         IProgress<TranscodeProgress>? progress, CancellationToken ct)
     {
         var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-nostats" };
@@ -49,9 +50,18 @@ public static class Transcoder
         args.Add("-i");
         args.Add(input);
         args.AddRange(outputArgs);
+        if (plan.Hls)
+        {
+            // 分片与 m3u8 同目录；路径用正斜杠避免转义问题
+            var seg = Path.Combine(Path.GetDirectoryName(outputPath)!, "seg_%05d.ts").Replace('\\', '/');
+            args.AddRange(["-hls_segment_filename", seg]);
+        }
         // 显式指定封装格式：产物可能先写 .tmp 临时名，扩展名推断会失败
-        args.AddRange(["-f", MuxerNameFor(outputExtension)]);
+        args.AddRange(["-f", MuxerNameFor(plan)]);
         args.AddRange(["-progress", "pipe:1", outputPath]);
+        if (Environment.GetEnvironmentVariable("PU_DEBUG_ARGS") == "1")
+            System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "pu-ffmpeg-args.log"),
+                $"{DateTime.Now:HH:mm:ss} cwd={Environment.CurrentDirectory} exit?\nffmpeg {string.Join(' ', args)}\n\n");
 
         double lastReported = -1;
         return await ProcessRunner.RunAsync(FfmpegLocator.Exe, args, onStdoutLine: line =>
@@ -87,8 +97,8 @@ public static class Transcoder
         }, cancellationToken: ct);
     }
 
-    /// <summary>产物扩展名 → ffmpeg 封装器名（m4a 也走 mp4 封装器）。</summary>
-    private static string MuxerNameFor(string outputExtension) => outputExtension switch
+    /// <summary>产物类型 → ffmpeg 封装器名（HLS 显式 hls；m4a 也走 mp4 封装器）。</summary>
+    private static string MuxerNameFor(TranscodePlan plan) => plan.Hls ? "hls" : plan.OutputExtension switch
     {
         "mp4" or "m4a" => "mp4",
         var ext => ext,
@@ -97,6 +107,7 @@ public static class Transcoder
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { /* 尽力而为 */ }
+        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { /* 尽力而为 */ }
     }
 
     private static string Trim(string s)

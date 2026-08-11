@@ -162,6 +162,8 @@ video{width:100%;height:100%;display:block;outline:none}
   <span class="pill" id="pill" aria-live="polite"><span class="dot"></span><span id="pillText">连接中</span></span>
 </header>
 
+<script src="/assets/hls.min.js"></script>
+
 <!-- 扫码入口：转码期间一直可见 -->
 <section class="card stage" id="qrCard">
   <div class="qr-frame">
@@ -238,14 +240,43 @@ video{width:100%;height:100%;display:block;outline:none}
       if (timer){ clearInterval(timer); timer = null; }
       if (!video.src){
         buildSubs(st.subtitles || []);
-        video.src = '/s/' + token + '/media';
-        show(loadingOverlay);
-        video.addEventListener('canplay', function(){ hide(loadingOverlay); }, { once:true });
-        video.addEventListener('error', function(){
-          hide(loadingOverlay);
-          setPill('播放失败', 'bad');
-        });
-        video.play().catch(function(){ show(playOverlay); });
+        var url = st.hls
+          ? '/s/' + token + '/hls/index.m3u8?v=' + 4
+          : '/s/' + token + '/media?v=' + 4;
+        var stopLoading = function(){ hide(loadingOverlay); };
+        var playIt = function(){ video.play().catch(function(){ hide(loadingOverlay); show(playOverlay); }); };
+        // HLS：Safari 原生播 m3u8；其它浏览器用 hls.js（MSE）
+        if (st.hls && window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')){
+          var hls = new Hls();
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.ERROR, function(evt, data){
+            if (data && data.fatal){
+              hide(loadingOverlay);
+              setPill('播放失败', 'bad');
+            }
+          });
+          hls.on(Hls.Events.MANIFEST_PARSED, playIt);
+          video.addEventListener('canplay', stopLoading, { once:true });
+          video.addEventListener('loadeddata', stopLoading, { once:true });
+        } else {
+          video.src = url;
+          video.addEventListener('canplay', stopLoading, { once:true });
+          video.addEventListener('loadeddata', stopLoading, { once:true }); // 有的移动端只发这个
+          video.addEventListener('error', function(){
+            hide(loadingOverlay);
+            setPill('播放失败', 'bad');
+          });
+          playIt();
+        }
+        // 兑底：8 秒还没起播条件就亮播放键，让用户自己点
+        setTimeout(function(){
+          if (video.readyState < 2 && !video.error
+              && !loadingOverlay.classList.contains('hidden')){
+            hide(loadingOverlay);
+            show(playOverlay);
+          }
+        }, 8000);
       }
     } else {
       setPill('失败', 'bad');

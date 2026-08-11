@@ -13,6 +13,7 @@
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <EmbeddedResource Include="..\..\web\index.html" LogicalName="web.index.html" />
     <EmbeddedResource Include="..\..\web\folder.html" LogicalName="web.folder.html" />
+    <EmbeddedResource Include="..\..\web\hls.min.js" LogicalName="web.hls.min.js" />
     <EmbeddedResource Include="..\..\assets\pu-logo.png" LogicalName="assets.pu-logo.png" />
   </ItemGroup>
 

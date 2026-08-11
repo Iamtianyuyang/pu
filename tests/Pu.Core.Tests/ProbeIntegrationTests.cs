@@ -113,16 +113,21 @@ public class ProbeIntegrationTests
 
         var info = await MediaProbe.ProbeAsync(src);
         var plan = TranscodePlan.Create(info, new EncoderCatalog(["libx264"]), src);
-        var outPath = Path.Combine(dir.Path, $"out.{plan.OutputExtension}");
-        await Transcoder.TranscodeAsync(src, plan, outPath, info.DurationUs);
+        var outPath = Path.Combine(dir.Path, plan.Hls ? "out.mp4.hls" : $"out.{plan.OutputExtension}");
+        if (plan.Hls) Directory.CreateDirectory(outPath);
+        await Transcoder.TranscodeAsync(src, plan, plan.Hls ? Path.Combine(outPath, "index.m3u8") : outPath, info.DurationUs);
 
-        Assert.True(File.Exists(outPath));
-        Assert.True(new FileInfo(outPath).Length > 0);
+        Assert.True(File.Exists(plan.Hls ? Path.Combine(outPath, "index.m3u8") : outPath));
+        Assert.True(plan.Hls
+            ? Directory.EnumerateFiles(outPath).Count(f => f.EndsWith(".ts")) > 0
+            : new FileInfo(outPath).Length > 0);
 
-        // 产物重新探测：应是 H.264 + MP4 + faststart
-        var outInfo = await MediaProbe.ProbeAsync(outPath);
+        // 产物重新探测：应是 H.264（HLS 就探测首个分片）
+        var outInfo = await MediaProbe.ProbeAsync(plan.Hls
+            ? Directory.EnumerateFiles(outPath, "*.ts").First()
+            : outPath);
         Assert.Equal("h264", outInfo.Video?.Codec);
-        Assert.True(Mp4Boxes.IsFastStart(outPath));
+        if (!plan.Hls) Assert.True(Mp4Boxes.IsFastStart(outPath));
     }
 
     private static async Task<string> MakeVideo(string dir, string name, string[] codecArgs)

@@ -39,7 +39,8 @@ public static class ArtifactLocator
         return null;
     }
 
-    /// <summary>决定新产物的落点（优先就地）。</summary>
+    /// <summary>决定新产物的落点（优先就地）。
+    /// HLS（扩展名 "mp4.hls"）：产物 = 目录/{name}.mp4.hls/index.m3u8，临时 = 同目录 + .tmp（整目录）。</summary>
     public static ArtifactTarget ForProduction(string sourcePath, string outputExtension, string? variant)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
@@ -47,16 +48,30 @@ public static class ArtifactLocator
         if (IsWritable(dir, sidecarDir))
         {
             var artifact = SidecarArtifactPath(sourcePath, outputExtension);
-            return new ArtifactTarget(artifact, artifact + ".tmp", sidecarDir, Sidecar: true);
+            return new ArtifactTarget(artifact,
+                IsHlsLayout(outputExtension) ? ArtifactDirOf(artifact) + ".tmp" : artifact + ".tmp",
+                sidecarDir, Sidecar: true);
         }
         var central = CentralArtifactPath(sourcePath, outputExtension, variant);
         return new ArtifactTarget(central, central, Path.GetDirectoryName(central)!, Sidecar: false);
     }
 
     public static bool IsSidecarPath(string artifactPath)
-        => string.Equals(
-            Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(artifactPath))),
-            SidecarDirName, StringComparison.OrdinalIgnoreCase);
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(artifactPath));
+        if (string.Equals(Path.GetFileName(dir), SidecarDirName, StringComparison.OrdinalIgnoreCase))
+            return true;
+        // HLS 产物在 {name}.mp4.hls/ 里，往上两级的 .pu 才算就地产物
+        return string.Equals(Path.GetFileName(Path.GetDirectoryName(dir)), SidecarDirName,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>HLS 布局：扩展名以 .hls 结尾时，产物是 {name}.{ext}/index.m3u8 目录式。</summary>
+    public static bool IsHlsLayout(string outputExtension)
+        => outputExtension.EndsWith(".hls", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>HLS 产物的目录（{name}.mp4.hls）。</summary>
+    public static string ArtifactDirOf(string artifactPath) => Path.GetDirectoryName(artifactPath)!;
 
     /// <summary>生产成功后写复用清单（与产物同名的 .json）。</summary>
     public static void WriteManifest(string artifactPath, string sourcePath, string? variant)
@@ -100,13 +115,25 @@ public static class ArtifactLocator
         {
             var artifact = line.Trim();
             if (artifact.Length == 0) continue;
-            try { freed += new FileInfo(artifact).Length; File.Delete(artifact); } catch { }
+            // HLS 产物（index.m3u8）→ 整个 {name}.mp4.hls 目录删掉（分片都在里面）
+            var dir = Path.GetDirectoryName(artifact);
+            if (dir is not null && Path.GetFileName(artifact) == "index.m3u8" && Directory.Exists(dir))
+            {
+                freed += DirSize(dir);
+                try { Directory.Delete(dir, recursive: true); } catch { }
+            }
+            else
+            {
+                try { freed += new FileInfo(artifact).Length; File.Delete(artifact); } catch { }
+            }
             try { File.Delete(ManifestPath(artifact)); } catch { }
+            // 空的 .pu 一并删（目录删完才算空）
             try
             {
-                var dir = Path.GetDirectoryName(artifact);
-                if (dir is not null
-                    && string.Equals(Path.GetFileName(dir), SidecarDirName, StringComparison.OrdinalIgnoreCase)
+                if (dir is not null && Path.GetFileName(dir) != SidecarDirName
+                    && Directory.Exists(Path.GetDirectoryName(dir)))
+                    dir = Path.GetDirectoryName(dir);
+                if (dir is not null && Directory.Exists(dir)
                     && !Directory.EnumerateFileSystemEntries(dir).Any())
                     Directory.Delete(dir);
             }
@@ -116,14 +143,31 @@ public static class ArtifactLocator
         return freed;
     }
 
+    private static long DirSize(string dir)
+    {
+        long total = 0;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+                total += new FileInfo(f).Length;
+        }
+        catch { }
+        return total;
+    }
+
     private static string SidecarArtifactPath(string sourcePath, string outputExtension)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
-        return Path.Combine(dir, SidecarDirName, $"{Path.GetFileName(sourcePath)}.{outputExtension}");
+        var basePath = Path.Combine(dir, SidecarDirName, $"{Path.GetFileName(sourcePath)}.{outputExtension}");
+        return IsHlsLayout(outputExtension)
+            ? Path.Combine(basePath, "index.m3u8") // {name}.mp4.hls/index.m3u8
+            : basePath;
     }
 
     private static string CentralArtifactPath(string sourcePath, string outputExtension, string? variant)
-        => Path.Combine(CacheKey.ArtifactDirFor(sourcePath, variant), $"out.{outputExtension}");
+        => IsHlsLayout(outputExtension)
+            ? Path.Combine(CacheKey.ArtifactDirFor(sourcePath, variant), $"out.{outputExtension}", "index.m3u8")
+            : Path.Combine(CacheKey.ArtifactDirFor(sourcePath, variant), $"out.{outputExtension}");
 
     private static string ManifestPath(string artifactPath) => artifactPath + ".json";
 

@@ -5,6 +5,7 @@ public static class EmbeddedWeb
 {
     public static string IndexHtml { get; } = Load("web.index.html");
     public static string FolderHtml { get; } = Load("web.folder.html");
+    public static string HlsJs { get; } = Load("web.hls.min.js"); // hls.js (Apache-2.0)
     public static byte[] LogoPng { get; } = LoadBytes("assets.pu-logo.png");
 
     private static string Load(string name)

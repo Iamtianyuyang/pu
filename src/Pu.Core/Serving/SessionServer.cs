@@ -44,6 +44,9 @@ public sealed class SessionServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
     private readonly WebApplication _app;
+
+    /// <summary>请求级诊断日志（Pu.App 注入；不看 UA/Range 排查不了移动端播放问题）。</summary>
+    public static Action<string>? LogSink;
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
 
     public int Port { get; }
@@ -80,12 +83,35 @@ public sealed class SessionServer : IAsyncDisposable
                 : Results.NotFound();
         });
 
-        app.MapGet("/s/{token}/media", (string token) =>
+        app.MapGet("/s/{token}/media", (string token, HttpContext context) =>
         {
             server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
             if (job.State != JobState.Serving) return Results.Conflict();
-            return Results.File(job.ArtifactPath, job.ContentType, enableRangeProcessing: true);
+            LogSink?.Invoke($"media 请求 {context.Connection.RemoteIpAddress}"
+                + $" range=[{context.Request.Headers.Range}]"
+                + $" ua={context.Request.Headers.UserAgent}");
+            // HLS：给 m3u8（播放器会按相对路径拉分片）；MP4：Range 直服
+            return job.IsHls
+                ? Results.File(job.ArtifactPath, "application/vnd.apple.mpegurl")
+                : Results.File(job.ArtifactPath, job.ContentType, enableRangeProcessing: true);
+        });
+
+        // HLS 分片 / m3u8 内引用的任何文件（防目录穿越：只放行普通文件名）
+        app.MapGet("/s/{token}/hls/{file}", (string token, string file, HttpContext context) =>
+        {
+            server.Touch();
+            if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
+            if (job.State != JobState.Serving || !job.IsHls) return Results.NotFound();
+            if (file.Length == 0 || file.Length > 64
+                || !file.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
+                return Results.BadRequest();
+            var path = Path.Combine(Path.GetDirectoryName(job.ArtifactPath)!, file);
+            if (!File.Exists(path)) return Results.NotFound();
+            var type = file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
+                ? "application/vnd.apple.mpegurl"
+                : "video/mp2t";
+            return Results.File(path, type, enableRangeProcessing: true);
         });
 
         app.MapGet("/s/{token}/status", (string token) =>
@@ -120,6 +146,12 @@ public sealed class SessionServer : IAsyncDisposable
         {
             context.Response.Headers.CacheControl = "public, max-age=86400";
             return Results.Bytes(EmbeddedWeb.LogoPng, "image/png");
+        });
+
+        app.MapGet("/assets/hls.min.js", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "public, max-age=86400";
+            return Results.Text(EmbeddedWeb.HlsJs, "application/javascript");
         });
 
         app.MapGet("/", () => Results.Text("pu~ is running"));
@@ -206,6 +238,7 @@ public sealed class SessionServer : IAsyncDisposable
             ArtifactPath = artifact,
             ContentType = contentType,
             PlanExplanation = plan.Explanation,
+            IsHls = !passthrough && plan.Hls,
         };
         _jobs[job.Token] = job;
         LatestUrl = UrlFor(job);
@@ -276,13 +309,31 @@ public sealed class SessionServer : IAsyncDisposable
         try
         {
             Directory.CreateDirectory(target.WorkDir);
+            if (plan.Hls)
+            {
+                Directory.CreateDirectory(target.TempPath); // ffmpeg 需要分片目录存在
+                if (Environment.GetEnvironmentVariable("PU_DEBUG_ARGS") == "1")
+                    System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "pu-ffmpeg-args.log"),
+                        $"{DateTime.Now:HH:mm:ss} tmp={target.TempPath} exists={Directory.Exists(target.TempPath)}\n");
+            }
             var progress = new Progress<TranscodeProgress>(p => job.UpdateProgress(p.Fraction));
-            // 先写临时文件，成功才改名成正式产物——就地模式下源目录不会看到半截 mp4
-            var transcode = Transcoder.TranscodeAsync(sourcePath, plan, target.TempPath, info.DurationUs, progress, ct);
+            // HLS 临时目录 = {产物}.tmp；ffmpeg 写 temp/index.m3u8 + 分片，成功整目录改名
+            var outputPath = plan.Hls
+                ? Path.Combine(target.TempPath, "index.m3u8")
+                : target.TempPath;
+            var transcode = Transcoder.TranscodeAsync(sourcePath, plan, outputPath, info.DurationUs, progress, ct);
             var subs = SubtitleExtractor.ExtractAsync(sourcePath, info, target.WorkDir, ct);
             await Task.WhenAll(transcode, subs);
-            if (!string.Equals(target.TempPath, target.ArtifactPath, StringComparison.OrdinalIgnoreCase))
+            if (plan.Hls)
+            {
+                var finalDir = Path.GetDirectoryName(target.ArtifactPath)!;
+                if (Directory.Exists(finalDir)) Directory.Delete(finalDir, recursive: true); // 覆盖旧产物
+                Directory.Move(target.TempPath, finalDir);
+            }
+            else if (!string.Equals(target.TempPath, target.ArtifactPath, StringComparison.OrdinalIgnoreCase))
+            {
                 File.Move(target.TempPath, target.ArtifactPath, overwrite: true);
+            }
             if (target.Sidecar)
             {
                 ArtifactLocator.WriteManifest(target.ArtifactPath, sourcePath, variant);
@@ -311,7 +362,7 @@ public sealed class SessionServer : IAsyncDisposable
             string.IsNullOrEmpty(s.Title) && LangNames.TryGetValue(s.Language, out var n) ? n : s.Title)).ToList();
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
-            job.Title, job.PlanExplanation, job.SourcePath, subs);
+            job.Title, job.PlanExplanation, job.SourcePath, subs, job.IsHls);
     }
 
     private FolderStatusDto ToFolderDto(FolderJob folder)

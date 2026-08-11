@@ -41,16 +41,17 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void H264_Mp4_但Moov在尾部_重封装为分段Mp4()
+    public void H264_Mp4_但Moov在尾部_重封装为常规Mp4()
     {
         var plan = TranscodePlan.Create(Media("h264"), Nvenc, isFastStart: false);
         Assert.Equal(PlanKind.Remux, plan.Kind);
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a copy", Args(plan));
-        // fMP4：moov 带完整轨道信息（default_base_moof），免 faststart 二次整文件重写；
-        // empty_moov 会让 Chromium 系不起播，禁用
-        Assert.Contains("-movflags frag_keyframe+default_base_moof", Args(plan));
-        Assert.DoesNotContain("empty_moov", Args(plan));
+        // HLS（m3u8 + TS 分片）：浏览器拿到首个分片即播，不受 moov/Range/渐进解析影响
+        Assert.Contains("-f hls", Args(plan));
+        Assert.Contains("-hls_time 6", Args(plan));
+        Assert.Equal("mp4.hls", plan.OutputExtension);
+        Assert.True(plan.Hls);
     }
 
     [Fact]
@@ -69,9 +70,10 @@ public class TranscodePlanTests
         Assert.Equal(PlanKind.Remux, plan.Kind);
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a copy", Args(plan));
-        // eac3 与 empty_moov 冲突（muxer 需先解析音帧）→ 统一 default_base_moof 分段写法
-        Assert.Contains("-movflags frag_keyframe+default_base_moof", Args(plan));
-        Assert.DoesNotContain("empty_moov", Args(plan));
+        // HLS 统一；eac3 音轨 copy 保留
+        Assert.Contains("-c:a copy", Args(plan));
+        Assert.Contains("-f hls", Args(plan));
+        Assert.True(plan.Hls);
     }
 
     [Fact]
