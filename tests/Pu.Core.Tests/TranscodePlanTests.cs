@@ -154,4 +154,37 @@ public class TranscodePlanTests
         var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
         Assert.Contains("-pix_fmt yuv420p", Args(plan));
     }
+
+    [Fact]
+    public void 硬件编码器_带硬件解码输入参数()
+    {
+        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
+        Assert.Equal(["-hwaccel", "cuda"], plan.EffectiveInputArgs);
+    }
+
+    [Fact]
+    public void 软编_无硬件解码参数()
+    {
+        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Soft, isFastStart: true);
+        Assert.Empty(plan.EffectiveInputArgs);
+    }
+
+    [Fact]
+    public void 过小视频_跳过硬件编码直接软编()
+    {
+        var info = new MediaInfo
+        {
+            FileName = "tiny.mkv",
+            FormatName = "matroska,webm",
+            DurationUs = 1_000_000,
+            Streams =
+            [
+                new VideoStreamInfo(0, "hevc", "Main 10", "yuv420p10le", 128, 72, 10),
+                new AudioStreamInfo(1, "aac", 48000, 2),
+            ],
+        };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Contains("libx264", Args(plan));
+        Assert.Empty(plan.EffectiveInputArgs);
+    }
 }

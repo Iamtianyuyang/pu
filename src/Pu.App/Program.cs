@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.Channels;
 using Pu.App.Shell;
 using Pu.App.Tray;
+using Pu.Core.Cache;
 using Pu.Core.Ipc;
 using Pu.Core.Serving;
 
@@ -24,7 +25,7 @@ public static class Program
         switch (args[0])
         {
             case "--version":
-                Console.WriteLine("pu~ 0.2.0 (M2)");
+                Console.WriteLine("pu~ 0.3.0 (M3)");
                 return 0;
             case "--register":
                 RegisterShell();
@@ -32,16 +33,15 @@ public static class Program
             case "--unregister":
                 UnregisterShell();
                 return 0;
+            case "--clean":
+                CleanCache();
+                return 0;
         }
-        if (Directory.Exists(args[0]))
-        {
-            Console.Error.WriteLine("文件夹模式（列表页）在 M3 提供，请先传入视频文件。");
-            return 2;
-        }
+
         var input = Path.GetFullPath(args[0]);
-        if (!File.Exists(input))
+        if (!File.Exists(input) && !Directory.Exists(input))
         {
-            Console.Error.WriteLine($"找不到文件: {input}");
+            Console.Error.WriteLine($"找不到文件或文件夹: {input}");
             return 2;
         }
         var noBrowser = args.Contains("--no-browser", StringComparer.Ordinal);
@@ -54,7 +54,7 @@ public static class Program
         using var mutex = new Mutex(true, MutexName, out var firstInstance);
         if (!firstInstance)
         {
-            Console.WriteLine("pu~ 已在运行，把文件交给已有实例…");
+            Console.WriteLine("pu~ 已在运行，把任务交给已有实例…");
             var sent = await IpcHub.SendAsync(input);
             if (!sent) Console.Error.WriteLine("交付失败：已有实例可能正在退出，请稍后重试。");
             return sent ? 0 : 1;
@@ -67,16 +67,7 @@ public static class Program
             var ipcTask = IpcHub.ServeAsync(inbox, cts.Token);
 
             var server = await SessionServer.StartAsync(ct: cts.Token);
-            var job = await server.SubmitAsync(input, cts.Token);
-            var url = server.UrlFor(job);
-            lock (ui)
-            {
-                Console.WriteLine($"pu~ 分析 {input}");
-                Console.WriteLine($"  {job.SourceDescription}");
-                Console.WriteLine($"  计划: {job.PlanExplanation}");
-                Console.WriteLine($"  状态页: {url}");
-            }
-            job.Changed += j => PrintJobProgress(j, ui);
+            var url = await HandleIncomingAsync(server, input, cts.Token, ui);
 
             var tray = StartTray(server, cts);
             var inboxTask = Task.Run(async () =>
@@ -85,14 +76,8 @@ public static class Program
                 {
                     try
                     {
-                        var j = await server.SubmitAsync(path, cts.Token);
-                        lock (ui)
-                        {
-                            Console.WriteLine($"\npu~ 收到新文件：{path}");
-                            Console.WriteLine($"  状态页: {server.UrlFor(j)}");
-                        }
-                        PrintJobProgress(j, ui);
-                        OpenBrowser(server.UrlFor(j));
+                        var u = await HandleIncomingAsync(server, path, cts.Token, ui);
+                        OpenBrowser(u);
                     }
                     catch (Exception ex)
                     {
@@ -104,7 +89,7 @@ public static class Program
 
             if (!noBrowser) OpenBrowser(url);
             Console.WriteLine();
-            Console.WriteLine("pu~ 运行中 —— 右键其它视频会直接送过来；托盘图标可停止服务。");
+            Console.WriteLine("pu~ 运行中 —— 右键其它视频/文件夹会直接送过来；托盘图标可停止服务。");
             Console.WriteLine("按 Ctrl+C 退出。");
 
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token); }
@@ -126,6 +111,35 @@ public static class Program
             Console.Error.WriteLine($"错误: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>处理一个入站路径（文件或文件夹）：探测/扫描 → 注册会话 → 打印 → 返回状态页 URL。</summary>
+    private static async Task<string> HandleIncomingAsync(
+        SessionServer server, string path, CancellationToken ct, object ui)
+    {
+        lock (ui) Console.WriteLine();
+        if (Directory.Exists(path))
+        {
+            var folder = await server.SubmitFolderAsync(path, ct);
+            lock (ui)
+            {
+                Console.WriteLine($"pu~ 分析文件夹 {path}");
+                Console.WriteLine($"  {folder.Files.Count} 个媒体文件（点开才转码）");
+                Console.WriteLine($"  列表页: {server.UrlForFolder(folder)}");
+            }
+            return server.UrlForFolder(folder);
+        }
+
+        var job = await server.SubmitAsync(path, ct);
+        lock (ui)
+        {
+            Console.WriteLine($"pu~ 分析 {path}");
+            Console.WriteLine($"  {job.SourceDescription}");
+            Console.WriteLine($"  计划: {job.PlanExplanation}");
+            Console.WriteLine($"  状态页: {server.UrlFor(job)}");
+        }
+        job.Changed += j => PrintJobProgress(j, ui);
+        return server.UrlFor(job);
     }
 
     private static void PrintJobProgress(MediaJob job, object ui)
@@ -198,7 +212,7 @@ public static class Program
             while (!cts.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromMinutes(1), cts.Token);
-                if (server.JobCount == 0 && server.IdleFor > SessionServer.IdleTimeout)
+                if (server.SessionCount == 0 && server.IdleFor > SessionServer.IdleTimeout)
                 {
                     lock (ui) Console.WriteLine("空闲超时（30 分钟无会话），自动退出");
                     cts.Cancel();
@@ -213,8 +227,8 @@ public static class Program
     {
         var exts = ShellConfig.Load();
         ShellRegister.Register(exts);
-        Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名（HKCU，无需管理员）。");
-        Console.WriteLine("  现在可以右键任意视频 → pu~");
+        Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名 + 文件夹（HKCU，无需管理员）。");
+        Console.WriteLine("  现在可以右键任意视频/文件夹 → pu~");
         Console.WriteLine("  撤销: pu --unregister");
     }
 
@@ -222,8 +236,22 @@ public static class Program
     {
         var exts = ShellConfig.Load();
         ShellRegister.Unregister(exts);
-        Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名）。");
+        Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
     }
+
+    private static void CleanCache()
+    {
+        var (entries, bytes) = CacheManager.Stats();
+        var freed = CacheManager.Clean();
+        Console.WriteLine($"已清空缓存：{entries} 项 / {FormatSize(bytes)}（释放 {FormatSize(freed)}）。");
+    }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):F0} MB",
+        _ => $"{bytes} B",
+    };
 
     private static void OpenBrowser(string url)
     {
@@ -240,17 +268,18 @@ public static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            pu~ —— 右键视频，扫码即播（M2：右键 + 托盘 + 二维码状态页）
+            pu~ —— 右键视频，扫码即播（M3：缓存 + 硬件加速 + 文件夹列表页）
 
             用法:
-              pu --register           注册右键菜单（HKCU，无需管理员）
+              pu --register           注册右键菜单（媒体扩展名 + 文件夹，HKCU）
               pu --unregister         移除右键菜单
-              pu <视频文件>            处理并弹出状态页（已有实例则交给它）
+              pu --clean              清空转码缓存
+              pu <视频文件|文件夹>     处理并弹出状态页/列表页（已有实例则交给它）
               pu --no-browser         不自动打开浏览器
               pu --help               显示本帮助
 
             状态页二维码在转码开始的瞬间就给出，转完自动起播。
-            按 Ctrl+C 或托盘「停止 pu~」退出。
+            缓存默认上限 20 GB，LRU 自动淘汰；空闲 30 分钟自动退出。
             """);
     }
 }

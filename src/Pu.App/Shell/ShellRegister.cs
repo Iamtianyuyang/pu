@@ -28,6 +28,13 @@ public static class ShellRegister
             using var command = key.CreateSubKey("command");
             command.SetValue(null, $"\"{exe}\" \"%1\"");
         }
+
+        // 文件夹（方案.md 第七节：右键文件夹 → 列表页）
+        using var dirKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Directory\shell\Pu");
+        dirKey.SetValue(null, "pu~");
+        dirKey.SetValue("Icon", $"\"{exe}\",0");
+        using var dirCommand = dirKey.CreateSubKey("command");
+        dirCommand.SetValue(null, $"\"{exe}\" \"%1\"");
     }
 
     public static void Unregister(IReadOnlyList<string> extensions)
@@ -38,5 +45,7 @@ public static class ShellRegister
             Registry.CurrentUser.DeleteSubKeyTree(
                 $@"Software\Classes\SystemFileAssociations\{ext}\shell\Pu", throwOnMissingSubKey: false);
         }
+        Registry.CurrentUser.DeleteSubKeyTree(
+            @"Software\Classes\Directory\shell\Pu", throwOnMissingSubKey: false);
     }
 }
