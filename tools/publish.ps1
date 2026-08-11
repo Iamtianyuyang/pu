@@ -5,8 +5,11 @@ $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
 Write-Host '== Publishing .NET 10 WPF (win-x64, self-contained, single-file) =='
+# PublishTrimmed=false: WPF relies on reflection and cannot be trimmed.
+# EnableCompressionInSingleFile: compress bundled assemblies (168 MB -> 74 MB).
 dotnet publish src/Pu.App -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:PublishTrimmed=false -o publish/pu
+    -p:PublishSingleFile=true -p:PublishTrimmed=false `
+    -p:EnableCompressionInSingleFile=true -o publish/pu
 
 $exe = Join-Path $root 'publish\pu\pu.exe'
 if (-not (Test-Path $exe)) { throw 'Publish failed: pu.exe was not produced.' }
