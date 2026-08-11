@@ -49,7 +49,8 @@ public class TranscodePlanTests
         Assert.Contains("-c:a copy", Args(plan));
         // HLS（m3u8 + TS 分片）：浏览器拿到首个分片即播，不受 moov/Range/渐进解析影响
         Assert.Contains("-f hls", Args(plan));
-        Assert.Contains("-hls_time 6", Args(plan));
+        Assert.Contains("-hls_time 2", Args(plan));
+        Assert.Contains("independent_segments", Args(plan));
         Assert.Equal("mp4.hls", plan.OutputExtension);
         Assert.True(plan.Hls);
     }

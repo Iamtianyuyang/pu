@@ -37,7 +37,8 @@ public sealed record TranscodePlan(
 
     /// <summary>HLS 产物：m3u8 引用同目录分片，RelativeSegments 占位由 Transcoder 展开。</summary>
     public static readonly string[] HlsOutputArgs =
-    ["-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod", "-hls_list_size", "0"];
+    ["-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod", "-hls_list_size", "0",
+     "-hls_flags", "independent_segments"];
 
     /// <summary>
     /// 产物格式版本：改封装参数（如 movflags）时 +1，调用方把它编进缓存变体，
@@ -48,8 +49,9 @@ public sealed record TranscodePlan(
     /// v3: Remux 回到常规 MP4 + faststart（moov 在头部，全浏览器拿到开头就开播）
     /// v4: Remux/全转码产物改为 HLS（m3u8 + TS 分片）——渐进 MP4 在旧版 Chrome 上
     ///     仍整文件下载；HLS 拿到首分片即播，Safari 原生、其余 hls.js
+    /// v5: 分片 6s→2s + independent_segments（拖动延迟实测降 ~60%）；转码加 2s 强制关键帧
     /// </summary>
-    public const int FormatVersion = 4;
+    public const int FormatVersion = 5;
 
     /// <summary>
     /// 这个文件按矩阵走是否会进入全转码分支（即需要硬件编码器目录）。
@@ -151,6 +153,8 @@ public sealed record TranscodePlan(
         full.AddRange(["-pix_fmt", "yuv420p"]);
         full.AddRange(EncoderCatalog.ArgsFor(enc));
         full.AddRange(["-tag:v", "avc1"]);
+        // 每 2s 一个关键帧：HLS 拖动落到 2s 粒度（copy 路径改不了关键帧，只能靠源 GOP）
+        full.AddRange(["-force_key_frames", "expr:gte(t,n_forced*2)"]);
         AddAudio(full, info, audioCopyable);
         full.AddRange(HlsOutputArgs);
         // 硬件编码器配硬件解码（失败时 Transcoder 自动软解回退）
