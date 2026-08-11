@@ -32,8 +32,11 @@ public sealed class MediaJob
 
     public JobState State { get { lock (_gate) return _state; } }
     public double Progress { get { lock (_gate) return _progress; } }
-    public string? Error { get; private set; }
-    public IReadOnlyList<SubtitleFile> Subtitles { get; private set; } = [];
+    public string? Error { get { lock (_gate) return _error; } }
+    public IReadOnlyList<SubtitleFile> Subtitles { get { lock (_gate) return _subtitles; } }
+
+    private string? _error;
+    private IReadOnlyList<SubtitleFile> _subtitles = [];
 
     /// <summary>进度 / 状态变化通知（控制台进度条等）。</summary>
     public event Action<MediaJob>? Changed;
@@ -46,13 +49,13 @@ public sealed class MediaJob
 
     public void SetServing(IReadOnlyList<SubtitleFile> subtitles)
     {
-        lock (_gate) { _state = JobState.Serving; _progress = 1; Subtitles = subtitles; }
+        lock (_gate) { _state = JobState.Serving; _progress = 1; _subtitles = subtitles; }
         Changed?.Invoke(this);
     }
 
     public void SetFailed(string error)
     {
-        lock (_gate) { _state = JobState.Failed; Error = error; }
+        lock (_gate) { _state = JobState.Failed; _error = error; }
         Changed?.Invoke(this);
     }
 }

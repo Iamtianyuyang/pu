@@ -23,6 +23,12 @@ public static class SubtitleExtractor
         var targets = info.Subtitles.Where(s => Convertible.Contains(s.Codec)).ToList();
         if (targets.Count == 0) return [];
 
+        // 全部 VTT 已存在（缓存命中/上次已抽）→ 免 ffmpeg 直接复用。
+        // 键与产物复用一致（路径|大小|mtime），源变了必然落新目录，不存在陈旧字幕。
+        if (targets.All(s => File.Exists(VttPathFor(artifactDir, s.Index))))
+            return targets.Select(s => new SubtitleFile(s.Index, s.Codec, s.Language, s.Title,
+                VttPathFor(artifactDir, s.Index))).ToList();
+
         Directory.CreateDirectory(Path.Combine(artifactDir, "subs"));
 
         var singlePass = await ExtractSinglePassAsync(sourcePath, targets, artifactDir, ct);

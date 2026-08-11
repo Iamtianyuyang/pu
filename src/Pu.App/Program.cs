@@ -16,6 +16,10 @@ public static class Program
     private const string MutexName = @"Local\pu~";
     private static volatile FolderJob? s_currentFolder;
 
+    // 每个 job 只订阅一次 Changed（文件夹复用同一 job 时避免重复订阅/重复刷新）
+    private static readonly HashSet<MediaJob> WiredJobs = [];
+    private static readonly object WireGate = new();
+
     public static async Task<int> Main(string[] args)
     {
         // ── 命令模式：临时分配控制台输出结果（WinExe 默认无控制台）──
@@ -393,7 +397,7 @@ public static class Program
               pu --unregister         移除右键菜单
               pu --clean              清空转码缓存
               pu <视频文件|文件夹>     处理并弹出 WPF 窗口（已有实例则交给它）
-              pu --debug              服务模式时输出日志到控制台
+              pu <文件|文件夹> --debug   服务模式时输出日志到控制台（须放在路径之后）
               pu --help / --version
 
             右键后弹出 WPF 窗口：二维码 + 复制/打开链接 + 转码进度。

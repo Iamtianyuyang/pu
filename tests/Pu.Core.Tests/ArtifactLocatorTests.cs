@@ -121,6 +121,44 @@ public class ArtifactLocatorTests
         }
     }
 
+    [Fact]
+    public void CleanRegistered_字幕副产物subs一并清除()
+    {
+        using var dir = new TempDir();
+        var old = Environment.GetEnvironmentVariable("PU_CONFIG_DIR");
+        Environment.SetEnvironmentVariable("PU_CONFIG_DIR", dir.Path);
+        try
+        {
+            var mediaDir = Path.Combine(dir.Path, "videos");
+            // 非 HLS 产物 + 字幕副产物
+            var artifact = Path.Combine(mediaDir, ".pu", "a.mkv.m4a");
+            Directory.CreateDirectory(Path.GetDirectoryName(artifact)!);
+            File.WriteAllText(artifact, "12345");
+            Directory.CreateDirectory(Path.Combine(mediaDir, ".pu", "subs"));
+            File.WriteAllText(Path.Combine(mediaDir, ".pu", "subs", "2.vtt"), "WEBVTT");
+            ArtifactLocator.Register(artifact);
+
+            // HLS 产物（index.m3u8 在 {name}.mp4.hls 目录里）
+            var hlsArtifact = Path.Combine(mediaDir, ".pu", "b.mkv.mp4.hls", "index.m3u8");
+            Directory.CreateDirectory(Path.GetDirectoryName(hlsArtifact)!);
+            File.WriteAllText(hlsArtifact, "#EXTM3U");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(hlsArtifact)!, "seg_00001.ts"), "ts");
+            Directory.CreateDirectory(Path.Combine(mediaDir, ".pu", "subs")); // 两个产物共用一个 subs
+            ArtifactLocator.Register(hlsArtifact);
+
+            ArtifactLocator.CleanRegistered();
+
+            Assert.False(File.Exists(artifact));
+            Assert.False(Directory.Exists(Path.Combine(mediaDir, ".pu", "b.mkv.mp4.hls")));
+            Assert.False(Directory.Exists(Path.Combine(mediaDir, ".pu", "subs"))); // 字幕副产物清了
+            Assert.False(Directory.Exists(Path.Combine(mediaDir, ".pu")));          // .pu 空 → 一并删
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CONFIG_DIR", old);
+        }
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = TestEnv.NewTestDir();

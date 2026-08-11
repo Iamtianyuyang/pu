@@ -127,6 +127,12 @@ public static class ArtifactLocator
                 try { freed += new FileInfo(artifact).Length; File.Delete(artifact); } catch { }
             }
             try { File.Delete(ManifestPath(artifact)); } catch { }
+            // 字幕副产物 .pu/subs（HLS 产物目录 {name}.mp4.hls 需向上取一级到 .pu）
+            var subsParent = Path.GetFileName(dir) == SidecarDirName ? dir : Path.GetDirectoryName(dir);
+            if (subsParent is not null && Path.GetFileName(subsParent) == SidecarDirName)
+            {
+                try { Directory.Delete(Path.Combine(subsParent, "subs"), recursive: true); } catch { }
+            }
             // 空的 .pu 一并删（目录删完才算空）
             try
             {

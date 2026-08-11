@@ -43,17 +43,24 @@ public sealed class SessionServer : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
+    // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次
+    private readonly ConcurrentDictionary<string, Task<MediaJob>> _opening = new(StringComparer.Ordinal);
     private readonly WebApplication _app;
 
     /// <summary>请求级诊断日志（Pu.App 注入；不看 UA/Range 排查不了移动端播放问题）。</summary>
     public static Action<string>? LogSink;
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
+    private int _activeJobs;
+    private long _lastMediaLogTicks;
 
     public int Port { get; }
     public string? LanIp { get; }
     public string? LatestUrl { get; private set; }
     public int JobCount => _jobs.Count;
     public int SessionCount => _jobs.Count + _folders.Count;
+
+    /// <summary>正在转码的任务数（空闲退出只看这个 + IdleFor，不看 SessionCount）。</summary>
+    public int ActiveJobCount => Volatile.Read(ref _activeJobs);
     public TimeSpan IdleFor => TimeSpan.FromTicks(DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastActivityTicks));
     public static TimeSpan IdleTimeout => TimeSpan.FromMinutes(30);
 
@@ -88,9 +95,14 @@ public sealed class SessionServer : IAsyncDisposable
             server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
             if (job.State != JobState.Serving) return Results.Conflict();
-            LogSink?.Invoke($"media 请求 {context.Connection.RemoteIpAddress}"
-                + $" range=[{context.Request.Headers.Range}]"
-                + $" ua={context.Request.Headers.UserAgent}");
+            // 分片每 2s 拉一个，逐条打日志会疯狂写盘（2 小时电影 ≈ 3600 次）→ 10s 限频
+            if (Environment.TickCount64 - Interlocked.Read(ref server._lastMediaLogTicks) >= 10_000)
+            {
+                Interlocked.Exchange(ref server._lastMediaLogTicks, Environment.TickCount64);
+                LogSink?.Invoke($"media 请求 {context.Connection.RemoteIpAddress}"
+                    + $" range=[{context.Request.Headers.Range}]"
+                    + $" ua={context.Request.Headers.UserAgent}");
+            }
             // HLS：给 m3u8（播放器会按相对路径拉分片）；MP4：Range 直服
             return job.IsHls
                 ? Results.File(job.ArtifactPath, "application/vnd.apple.mpegurl")
@@ -125,11 +137,9 @@ public sealed class SessionServer : IAsyncDisposable
         {
             server.Touch();
             if (!server._jobs.TryGetValue(token, out _)) return Results.NotFound();
-            if (string.IsNullOrEmpty(u) || u.Length > 512
-                || (!u.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                    && !u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
-                return Results.BadRequest();
-            return Results.Bytes(QrPng(u), "image/png");
+            // 只允许给本服务自己的 URL 出码：防止拿 token 生成指向钓鱼站的二维码
+            if (!IsOwnUrl(u, server.Port, server.LanIp)) return Results.BadRequest();
+            return Results.Bytes(QrPng(u!), "image/png");
         });
 
         app.MapGet("/s/{token}/sub/{index:int}", (string token, int index) =>
@@ -245,12 +255,17 @@ public sealed class SessionServer : IAsyncDisposable
 
         if (target is null)
         {
-            // 零处理 / 复用命中：抽完字幕直接可播
-            var subs = await SubtitleExtractor.ExtractAsync(sourcePath, info, artifactDir, ct);
+            // 零处理 / 复用命中：抽完字幕直接可播。
+            // 直出路径的字幕落中央缓存（{key}\subs\），不再往源视频目录写 subs\ 垃圾。
+            var subsRoot = passthrough
+                ? CacheKey.ArtifactDirFor(sourcePath)
+                : artifactDir;
+            var subs = await ExtractSubsSafeAsync(sourcePath, info, subsRoot, ct);
             job.SetServing(subs);
         }
         else
         {
+            Interlocked.Increment(ref _activeJobs);
             _ = RunJobAsync(job, sourcePath, info, plan, target, variant, ct);
         }
         CacheManager.MaybeEvict();
@@ -282,6 +297,21 @@ public sealed class SessionServer : IAsyncDisposable
             && existingJob.State != JobState.Failed)
             return existingJob; // 复用，避免重复转码
 
+        // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次
+        var key = $"{folder.Token}:{index}";
+        var task = _opening.GetOrAdd(key, _ => OpenFolderFileCoreAsync(folder, index, ct));
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            _opening.TryRemove(KeyValuePair.Create(key, task));
+        }
+    }
+
+    private async Task<MediaJob> OpenFolderFileCoreAsync(FolderJob folder, int index, CancellationToken ct)
+    {
         var file = folder.Files.FirstOrDefault(f => f.Index == index)
             ?? throw new InvalidOperationException($"文件不存在: {index}");
         var job = await SubmitAsync(file.Path, ct);
@@ -322,7 +352,8 @@ public sealed class SessionServer : IAsyncDisposable
                 ? Path.Combine(target.TempPath, "index.m3u8")
                 : target.TempPath;
             var transcode = Transcoder.TranscodeAsync(sourcePath, plan, outputPath, info.DurationUs, progress, ct);
-            var subs = SubtitleExtractor.ExtractAsync(sourcePath, info, target.WorkDir, ct);
+            // 字幕抽取失败不连坐视频：视频照常可播，只是没有字幕
+            var subs = ExtractSubsSafeAsync(sourcePath, info, target.WorkDir, ct);
             await Task.WhenAll(transcode, subs);
             if (plan.Hls)
             {
@@ -352,6 +383,29 @@ public sealed class SessionServer : IAsyncDisposable
         catch (Exception ex)
         {
             job.SetFailed(ex.Message);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeJobs);
+        }
+    }
+
+    /// <summary>抽字幕；失败只丢字幕（返回空表），不抛异常拖垮视频本身。</summary>
+    private static async Task<List<SubtitleFile>> ExtractSubsSafeAsync(
+        string sourcePath, MediaInfo info, string subsRoot, CancellationToken ct)
+    {
+        try
+        {
+            return await SubtitleExtractor.ExtractAsync(sourcePath, info, subsRoot, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogSink?.Invoke($"字幕抽取失败（忽略，继续播放）: {ex.Message}");
+            return [];
         }
     }
 
@@ -388,6 +442,16 @@ public sealed class SessionServer : IAsyncDisposable
         return info.Video is { } v
             ? $"{v.Codec} {v.BitDepth}bit {v.Width}×{v.Height} / 音频 {info.Audio?.Codec ?? "无"} / {size}"
             : $"音频 {info.Audio?.Codec ?? "无"} / {size}";
+    }
+
+    private static bool IsOwnUrl(string? u, int port, string? lanIp)
+    {
+        if (string.IsNullOrEmpty(u) || u.Length > 512) return false;
+        if (!Uri.TryCreate(u, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme is not ("http" or "https")) return false;
+        if (uri.Port != port) return false;
+        return uri.Host is "localhost" or "127.0.0.1" or "::1"
+            || (lanIp is not null && string.Equals(uri.Host, lanIp, StringComparison.OrdinalIgnoreCase));
     }
 
     private static byte[] QrPng(string url)

@@ -39,18 +39,29 @@ public static class IpcHub
 
     public static async Task<bool> SendAsync(string message, int timeoutMs = 3000)
     {
-        try
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true)
         {
-            using var cts = new CancellationTokenSource(timeoutMs);
-            await using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
-            await pipe.ConnectAsync(cts.Token);
-            await using var writer = new StreamWriter(pipe, Encoding.UTF8) { AutoFlush = true };
-            await writer.WriteLineAsync(message.AsMemory(), cts.Token);
-            return true;
-        }
-        catch (Exception)
-        {
-            return false; // 没有实例在跑 / 超时
+            var remaining = (int)(deadline - Environment.TickCount64);
+            if (remaining <= 0) return false;
+            try
+            {
+                using var cts = new CancellationTokenSource(remaining);
+                await using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+                await pipe.ConnectAsync(cts.Token);
+                await using var writer = new StreamWriter(pipe, Encoding.UTF8) { AutoFlush = true };
+                await writer.WriteLineAsync(message.AsMemory(), cts.Token);
+                return true;
+            }
+            catch (Exception) when (Environment.TickCount64 < deadline)
+            {
+                // 已有实例刚启动、还没开始监听 → 稍后重试，避免右键“没反应”
+                await Task.Delay(150);
+            }
+            catch
+            {
+                return false; // 超时 / 没有实例在跑
+            }
         }
     }
 }

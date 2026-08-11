@@ -161,12 +161,36 @@ public class ServingTests
         server.Register(job);
 
         using var client = new HttpClient();
-        var url = Uri.EscapeDataString($"http://192.168.1.5:{server.Port}/s/{job.Token}");
+        var host = server.LanIp ?? "localhost";
+        var url = Uri.EscapeDataString($"http://{host}:{server.Port}/s/{job.Token}");
         var resp = await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/qr.png?u={url}");
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         Assert.Contains("image/png", resp.Content.Headers.ContentType?.ToString());
         var body = await resp.Content.ReadAsByteArrayAsync();
         Assert.Equal([0x89, 0x50, 0x4E, 0x47], body[..4]); // PNG 魔数
+    }
+
+    [Fact]
+    public async Task 二维码_外站URL与错误端口_均400()
+    {
+        using var dir = new TempDir();
+        var job = ServingJob(dir.Path, "f2");
+        await using var server = await SessionServer.StartAsync(preferredPort: 18911);
+        server.Register(job);
+
+        using var client = new HttpClient();
+        // 外站 host → 拒绝（防止持 token 者生成钓鱼二维码）
+        var evil = Uri.EscapeDataString($"http://evil.example.com:{server.Port}/s/{job.Token}");
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/qr.png?u={evil}")).StatusCode);
+        // 端口不匹配 → 拒绝
+        var wrongPort = Uri.EscapeDataString($"http://localhost:9999/s/{job.Token}");
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/qr.png?u={wrongPort}")).StatusCode);
+        // 非 http(s) scheme → 拒绝
+        var js = Uri.EscapeDataString($"javascript:alert(1)");
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/qr.png?u={js}")).StatusCode);
     }
 
     [Fact]

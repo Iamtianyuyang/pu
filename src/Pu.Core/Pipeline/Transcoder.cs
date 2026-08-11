@@ -24,7 +24,16 @@ public static class Transcoder
             outputPath, plan, totalDurationUs, progress, ct);
         if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0)
         {
-            // 硬件解码失败（驱动/格式不支持）→ 纯软件解码重试一次
+            // 硬件解码失败（驱动/格式不支持）→ 清掉首轮残留分片/半截文件，纯软件解码重试一次
+            if (plan.Hls)
+            {
+                var dir = Path.GetDirectoryName(outputPath);
+                if (dir is not null)
+                {
+                    try { foreach (var f in Directory.EnumerateFiles(dir)) File.Delete(f); } catch { /* 尽力而为 */ }
+                }
+            }
+            else TryDelete(outputPath);
             result = await RunFfmpegAsync(input, [], plan.OutputArgs,
                 outputPath, plan, totalDurationUs, progress, ct);
         }

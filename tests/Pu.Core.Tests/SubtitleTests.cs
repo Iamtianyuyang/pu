@@ -9,6 +9,29 @@ namespace Pu.Core.Tests;
 public class SubtitleTests
 {
     [Fact]
+    public async Task Vtt已存在_跳过抽取直接复用()
+    {
+        // 无需 ffmpeg：所有 VTT 已存在时不应启动任何进程
+        using var dir = new TempDir();
+        var subsDir = Path.Combine(dir.Path, "subs");
+        Directory.CreateDirectory(subsDir);
+        File.WriteAllText(Path.Combine(subsDir, "3.vtt"), "WEBVTT");
+
+        var info = new MediaInfo
+        {
+            FileName = Path.Combine(dir.Path, "movie.mkv"),
+            FormatName = "matroska",
+            Streams = [new SubtitleStreamInfo(3, "subrip", "chi", "")],
+        };
+        var subs = await SubtitleExtractor.ExtractAsync(info.FileName, info, dir.Path);
+
+        var sub = Assert.Single(subs);
+        Assert.Equal(3, sub.StreamIndex);
+        Assert.Equal(Path.Combine(subsDir, "3.vtt"), sub.VttPath);
+        Assert.Equal("WEBVTT", await File.ReadAllTextAsync(sub.VttPath));
+    }
+
+    [Fact]
     public async Task Mkv内嵌Srt_抽成WebVTT()
     {
         if (!TestEnv.HasFfmpeg) return;
