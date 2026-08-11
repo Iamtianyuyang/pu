@@ -24,7 +24,7 @@ public static class SubtitleExtractor
             if (!Convertible.Contains(s.Codec)) continue; // 图形字幕跳过硬转
             var vtt = Path.Combine(artifactDir, "subs", $"{s.Index}.vtt");
             Directory.CreateDirectory(Path.GetDirectoryName(vtt)!);
-            var r = await ProcessRunner.RunAsync("ffmpeg", new[]
+            var r = await ProcessRunner.RunAsync(FfmpegLocator.Exe, new[]
             {
                 "-y", "-hide_banner", "-loglevel", "error",
                 "-i", sourcePath,

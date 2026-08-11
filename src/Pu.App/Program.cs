@@ -25,13 +25,19 @@ public static class Program
         switch (args[0])
         {
             case "--version":
-                Console.WriteLine("pu~ 0.3.0 (M3)");
+                Console.WriteLine($"pu~ {VersionString} (M4)");
                 return 0;
             case "--register":
                 RegisterShell();
                 return 0;
             case "--unregister":
                 UnregisterShell();
+                return 0;
+            case "--install":
+                InstallSelf();
+                return 0;
+            case "--uninstall":
+                UninstallSelf();
                 return 0;
             case "--clean":
                 CleanCache();
@@ -239,6 +245,73 @@ public static class Program
         Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
     }
 
+    /// <summary>自安装（方案.md M4）：把自己复制到 %LOCALAPPDATA%\Pu\ 并注册右键菜单，菜单指向稳定路径。</summary>
+    private static void InstallSelf()
+    {
+        var destDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu");
+        Directory.CreateDirectory(destDir);
+        var dest = Path.Combine(destDir, "pu.exe");
+        var src = Environment.ProcessPath!;
+        if (!string.Equals(src, dest, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Copy(src, dest, overwrite: true);
+            Console.WriteLine($"已安装到 {dest}");
+        }
+        else
+        {
+            Console.WriteLine($"已是最新安装（{dest}）");
+        }
+
+        var exts = ShellConfig.Load();
+        ShellRegister.Register(exts, dest);
+        Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名 + 文件夹（HKCU，无需管理员）。");
+        Console.WriteLine("现在可以右键任意视频/文件夹 → pu~");
+    }
+
+    private static void UninstallSelf()
+    {
+        var exts = ShellConfig.Load();
+        ShellRegister.Unregister(exts);
+        Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
+
+        var destDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu");
+        var dest = Path.Combine(destDir, "pu.exe");
+        try
+        {
+            if (File.Exists(dest))
+            {
+                if (string.Equals(Environment.ProcessPath, dest, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 正在运行的 exe 不能删自己：借 cmd 延时清理（本进程退出后生效）
+                    var bat = Path.Combine(Path.GetTempPath(), $"pu-uninstall-{Environment.ProcessId}.cmd");
+                    File.WriteAllText(bat,
+                        $"@echo off\r\ntimeout /t 1 /nobreak > nul\r\ndel /f /q \"{dest}\"\r\ndel /f /q \"%~f0\"\r\n");
+                    Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{bat}\"")
+                    {
+                        UseShellExecute = true,
+                        WindowStyle = ProcessWindowStyle.Hidden,
+                    });
+                    Console.WriteLine("已安排删除 pu.exe（进程退出后生效）。");
+                }
+                else
+                {
+                    File.Delete(dest);
+                    Console.WriteLine("已删除 pu.exe。");
+                }
+            }
+        }
+        catch (Exception)
+        {
+            Console.WriteLine($"pu.exe 被占用，请退出运行中的 pu~ 后手动删除 {dest}");
+        }
+        try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
+    }
+
+    private static string VersionString =>
+        typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+
     private static void CleanCache()
     {
         var (entries, bytes) = CacheManager.Stats();
@@ -268,9 +341,11 @@ public static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            pu~ —— 右键视频，扫码即播（M3：缓存 + 硬件加速 + 文件夹列表页）
+            pu~ —— 右键视频，扫码即播（M4：NativeAOT + 安装器）
 
             用法:
+              pu --install            安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单
+              pu --uninstall          移除右键菜单并删除安装文件
               pu --register           注册右键菜单（媒体扩展名 + 文件夹，HKCU）
               pu --unregister         移除右键菜单
               pu --clean              清空转码缓存
@@ -280,6 +355,7 @@ public static class Program
 
             状态页二维码在转码开始的瞬间就给出，转完自动起播。
             缓存默认上限 20 GB，LRU 自动淘汰；空闲 30 分钟自动退出。
+            需要 ffmpeg：https://www.gyan.dev/ffmpeg/builds/ （bin 加入 PATH 或写进 config.json）
             """);
     }
 }

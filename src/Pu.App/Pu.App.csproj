@@ -7,6 +7,10 @@
     <AssemblyName>pu</AssemblyName>
     <RootNamespace>Pu.App</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 应用本身就是 Windows 专用（右键菜单/托盘/注册表），避免 CA1416 平台噪音 -->
+    <SupportedOSPlatform>windows</SupportedOSPlatform>
+    <Version>0.4.0</Version>
+    <StripSymbols>true</StripSymbols>
     <!-- 托盘与右键菜单图标：嵌入 exe（右键菜单 Icon= 值指向 exe,0） -->
     <ApplicationIcon>..\..\assets\pu.ico</ApplicationIcon>
     <!-- M4 目标：NativeAOT 单 exe。PublishAot 只影响 dotnet publish，不影响 build/run -->
@@ -16,6 +20,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Pu.Core\Pu.Core.csproj" />
     <EmbeddedResource Include="..\..\assets\pu.ico" LogicalName="pu.ico" />
+    <!-- NativeAOT 裁剪修复（dotnet/aspnetcore 已知坑）：
+         1. RequestDelegateFactory 运行时用表达式树查找 StringValues→string 强制转换 → 根 Primitives
+         2. 引用程序集中的 async 路由（Task<IResult>）在裁剪后丢失 awaitable 辅助代码 → 根 Http.Extensions -->
+    <TrimmerRootAssembly Include="Microsoft.Extensions.Primitives" />
+    <TrimmerRootAssembly Include="Microsoft.AspNetCore.Http.Extensions" />
   </ItemGroup>
 
 </Project>

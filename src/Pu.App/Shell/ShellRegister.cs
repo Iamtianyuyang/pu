@@ -16,8 +16,11 @@ public static class ShellRegister
         ?? throw new InvalidOperationException("无法定位自身路径");
 
     public static void Register(IReadOnlyList<string> extensions)
+        => Register(extensions, ExePath);
+
+    public static void Register(IReadOnlyList<string> extensions, string exePath)
     {
-        var exe = ExePath;
+        var exe = exePath;
         foreach (var ext in extensions)
         {
             if (!ext.StartsWith('.')) continue;

@@ -39,8 +39,8 @@ public static class ShellConfig
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
-            // 手写 JSON：避免 AOT 下对匿名类型的反射序列化
-            var json = "{\"extensions\":[" + string.Join(",", defaults.Select(s => JsonSerializer.Serialize(s))) + "]}";
+            // 扩展名是 .xxx 令牌，不含引号，手写 JSON 避免 AOT 反射序列化
+            var json = "{\"extensions\":[" + string.Join(",", defaults.Select(s => "\"" + s + "\"")) + "]}";
             File.WriteAllText(ConfigPath, json);
         }
         catch { }

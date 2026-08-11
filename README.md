@@ -4,11 +4,27 @@
 
 完整技术方案见 [方案.md](方案.md)。
 
-## 当前状态：M3（缓存 + 硬件加速 + 文件夹列表页）
+## 当前状态：M4（NativeAOT + 安装器）
 
 ```powershell
+# 开发运行
 pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹，HKCU）
 ```
+
+### 发给别人（publish/pu-windows-x64.zip）
+
+解压后：
+
+```
+pu.exe --install      # 安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单（无需管理员）
+pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
+```
+
+- **单文件 NativeAOT exe（≈16 MB）**，无 .NET 依赖，冷启动 <50 ms
+- 需要 ffmpeg（不捆绑，GPL 分发义务）：
+  1. 下载 https://www.gyan.dev/ffmpeg/builds/ （ffmpeg-release-essentials.zip）
+  2. bin 目录加入 PATH，或写 %LOCALAPPDATA%\Pu\config.json 的 `{"ffmpeg":"..."}`
+  3. 缺失时程序会提示引导
 
 ### 单个视频
 
@@ -41,12 +57,20 @@ pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹�
 ## 命令
 
 ```powershell
-pu --register            注册右键菜单（扩展名清单可改 %LOCALAPPDATA%\Pu\extensions.json）
-pu --unregister          移除右键菜单
-pu --clean               清空转码缓存
+pu --install            安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单
+pu --uninstall          卸载（移除右键菜单 + 删除安装文件）
+pu --register           注册右键菜单（扩展名清单可改 %LOCALAPPDATA%\Pu\extensions.json）
+pu --unregister         移除右键菜单
+pu --clean              清空转码缓存
 pu <视频文件|文件夹>      处理并弹出状态页/列表页（已有实例则交给它）
-pu --no-browser          不自动打开浏览器
+pu --no-browser         不自动打开浏览器
 pu --help / --version
+```
+
+## 打包
+
+```powershell
+powershell -File tools/publish.ps1   # NativeAOT 发布 + 产出 zip
 ```
 
 ## 测试

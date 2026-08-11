@@ -50,7 +50,7 @@ public static class Transcoder
         args.AddRange(["-progress", "pipe:1", outputPath]);
 
         double lastReported = -1;
-        return await ProcessRunner.RunAsync("ffmpeg", args, onStdoutLine: line =>
+        return await ProcessRunner.RunAsync(FfmpegLocator.Exe, args, onStdoutLine: line =>
         {
             if (!line.StartsWith("out_time_us=", StringComparison.Ordinal)) return;
             if (!long.TryParse(line.AsSpan("out_time_us=".Length), out var us) || totalDurationUs <= 0) return;

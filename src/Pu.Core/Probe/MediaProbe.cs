@@ -8,7 +8,7 @@ public static class MediaProbe
 {
     public static async Task<MediaInfo> ProbeAsync(string filePath, CancellationToken ct = default)
     {
-        var result = await ProcessRunner.RunAsync("ffprobe", new[]
+        var result = await ProcessRunner.RunAsync(FfmpegLocator.ProbeExe, new[]
         {
             "-v", "error",
             "-print_format", "json",

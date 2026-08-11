@@ -21,7 +21,7 @@ public sealed class EncoderCatalog
 
     public static async Task<EncoderCatalog> DetectAsync(CancellationToken ct = default)
     {
-        var result = await ProcessRunner.RunAsync("ffmpeg", ["-hide_banner", "-encoders"], cancellationToken: ct);
+        var result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, ["-hide_banner", "-encoders"], cancellationToken: ct);
         var found = new List<string>();
         foreach (var line in result.StdOut.Split('\n'))
         {
