@@ -77,17 +77,30 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void Hevc10bit_全转码_优先硬件编码器()
+    public void HevcMain10_视频Copy_不打码()
     {
-        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
+        // iOS 11+ / A9+ 原生支持 HEVC Main10 —— 10bit 也无需重编码（手机 4K 视频的主流格式）
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.Remux, plan.Kind);
+        Assert.Contains("-c:v copy", Args(plan));
+        Assert.Contains("-tag:v hvc1", Args(plan));
+    }
+
+    [Fact]
+    public void Hevc12bit_全转码_优先硬件编码器()
+    {
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Nvenc, isFastStart: true);
         Assert.Equal(PlanKind.FullTranscode, plan.Kind);
         Assert.Contains("h264_nvenc", Args(plan));
     }
 
     [Fact]
-    public void Hevc10bit_无硬件编码器_回退Libx264()
+    public void Hevc12bit_无硬件编码器_回退Libx264()
     {
-        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Soft, isFastStart: true);
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Soft, isFastStart: true);
         Assert.Equal(PlanKind.FullTranscode, plan.Kind);
         Assert.Contains("libx264", Args(plan));
         Assert.Contains("-crf 23", Args(plan));
@@ -151,21 +164,21 @@ public class TranscodePlanTests
     [Fact]
     public void 全转码_输出像素格式固定Yuv420p()
     {
-        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
+        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Nvenc, isFastStart: true);
         Assert.Contains("-pix_fmt yuv420p", Args(plan));
     }
 
     [Fact]
     public void 硬件编码器_带硬件解码输入参数()
     {
-        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Nvenc, isFastStart: true);
+        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Nvenc, isFastStart: true);
         Assert.Equal(["-hwaccel", "cuda"], plan.EffectiveInputArgs);
     }
 
     [Fact]
     public void 软编_无硬件解码参数()
     {
-        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 10, pixFmt: "yuv420p10le", profile: "Main 10"), Soft, isFastStart: true);
+        var plan = TranscodePlan.Create(Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Soft, isFastStart: true);
         Assert.Empty(plan.EffectiveInputArgs);
     }
 
@@ -179,7 +192,7 @@ public class TranscodePlanTests
             DurationUs = 1_000_000,
             Streams =
             [
-                new VideoStreamInfo(0, "hevc", "Main 10", "yuv420p10le", 128, 72, 10),
+                new VideoStreamInfo(0, "hevc", "Main 12", "yuv420p12le", 128, 72, 12),
                 new AudioStreamInfo(1, "aac", 48000, 2),
             ],
         };

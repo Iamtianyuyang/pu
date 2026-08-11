@@ -86,14 +86,20 @@ public static class MediaProbe
     /// <summary>位深推断：pix_fmt / profile 里的 10/12-bit 标记。nv12 等 8bit 格式不含这些标记。</summary>
     private static int InferBitDepth(string? pixFmt, string? profile)
     {
-        if (pixFmt is not null && (pixFmt.Contains("10le", StringComparison.Ordinal)
-            || pixFmt.Contains("10be", StringComparison.Ordinal)
-            || pixFmt.Contains("p010", StringComparison.OrdinalIgnoreCase)
-            || pixFmt.Contains("12le", StringComparison.Ordinal)
-            || pixFmt.Contains("12be", StringComparison.Ordinal)))
-            return 10;
-        if (profile is not null && profile.Contains("10", StringComparison.Ordinal))
-            return 10;
+        if (pixFmt is not null)
+        {
+            if (pixFmt.Contains("12le", StringComparison.Ordinal) || pixFmt.Contains("12be", StringComparison.Ordinal))
+                return 12;
+            if (pixFmt.Contains("10le", StringComparison.Ordinal)
+                || pixFmt.Contains("10be", StringComparison.Ordinal)
+                || pixFmt.Contains("p010", StringComparison.OrdinalIgnoreCase))
+                return 10;
+        }
+        if (profile is not null)
+        {
+            if (profile.Contains("12", StringComparison.Ordinal)) return 12;
+            if (profile.Contains("10", StringComparison.Ordinal)) return 10;
+        }
         return 8;
     }
 

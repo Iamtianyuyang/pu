@@ -71,15 +71,16 @@ public sealed record TranscodePlan(
             return new TranscodePlan(PlanKind.Remux, why, args.ToArray(), "mp4");
         }
 
-        // ── 3. HEVC 8bit：视频 copy + tag 改 hvc1（Safari 硬性要求，否则黑屏不报错）──
-        if (video.Codec == "hevc" && is8Bit)
+        // ── 3. HEVC 8bit / Main10：视频 copy + tag 改 hvc1（Safari/iOS 原生支持，方案.md 第五节）──
+        bool hevcMain10 = video.Codec == "hevc" && video.Profile.Contains("Main 10", StringComparison.OrdinalIgnoreCase);
+        if (video.Codec == "hevc" && (is8Bit || hevcMain10))
         {
             var args = BuildMaps(info);
             args.AddRange(["-c:v", "copy", "-tag:v", "hvc1"]);
             AddAudio(args, info, audioIsAac);
             args.AddRange(["-movflags", "+faststart"]);
             return new TranscodePlan(PlanKind.Remux,
-                "HEVC 8bit 视频 copy，codec tag 改 hvc1（Safari 必需）", args.ToArray(), "mp4");
+                $"HEVC {video.Profile} 视频 copy，codec tag 改 hvc1（Safari 必需）", args.ToArray(), "mp4");
         }
 
         // ── 4. 全转码：HEVC 10bit / Hi10P / AV1 / VP9 / 其它 ──

@@ -73,7 +73,7 @@ public class ProbeIntegrationTests
     }
 
     [Fact]
-    public async Task Hevc10bit_全转码()
+    public async Task HevcMain10_打Hvc1Tag_不转码()
     {
         if (!TestEnv.HasFfmpeg) return;
         using var dir = new TempDir();
@@ -81,7 +81,24 @@ public class ProbeIntegrationTests
             ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-c:a", "aac", "-movflags", "+faststart"]);
 
         var info = await MediaProbe.ProbeAsync(path);
-        Assert.Equal(10, info.Video?.BitDepth);
+        Assert.Equal("hevc", info.Video?.Codec);
+        Assert.Contains("Main 10", info.Video?.Profile);
+        var plan = TranscodePlan.Create(info, new EncoderCatalog(["libx264"]), path);
+        Assert.Equal(PlanKind.Remux, plan.Kind); // iOS 11+ 原生支持 Main10 → 直接 copy
+        Assert.Contains("-c:v copy", string.Join(' ', plan.OutputArgs));
+        Assert.Contains("-tag:v hvc1", string.Join(' ', plan.OutputArgs));
+    }
+
+    [Fact]
+    public async Task Hevc12bit_全转码()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var path = await MakeVideo(dir.Path, "hevc12.mp4",
+            ["-c:v", "libx265", "-pix_fmt", "yuv420p12le", "-c:a", "aac", "-movflags", "+faststart"]);
+
+        var info = await MediaProbe.ProbeAsync(path);
+        Assert.Equal(12, info.Video?.BitDepth);
         var plan = TranscodePlan.Create(info, new EncoderCatalog(["libx264"]), path);
         Assert.Equal(PlanKind.FullTranscode, plan.Kind);
     }
