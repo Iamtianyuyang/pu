@@ -63,6 +63,11 @@ public static class Transcoder
         else TryDelete(outputPath);
     }
 
+    /// <summary>看门狗检查间隔；-progress 正常每 ~0.5s 输出一行，间隔取 30s 足够灵敏。</summary>
+    private static readonly TimeSpan StallCheckInterval = TimeSpan.FromSeconds(30);
+    /// <summary>无进展阈值：120 秒没有任何 stdout 输出 → 判定 ffmpeg 卡死（驱动/坏文件），终止并走兜底。</summary>
+    private const long StallTimeoutMs = 120_000;
+
     private static async Task<ProcessResult> RunFfmpegAsync(
         string input, string[] inputArgs, string[] outputArgs, string outputPath,
         TranscodePlan plan, long totalDurationUs,
@@ -86,38 +91,78 @@ public static class Transcoder
             System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "pu-ffmpeg-args.log"),
                 $"{DateTime.Now:HH:mm:ss} cwd={Environment.CurrentDirectory} exit?\nffmpeg {string.Join(' ', args)}\n\n");
 
-        double lastReported = -1;
-        return await ProcessRunner.RunAsync(FfmpegLocator.Exe, args, onStdoutLine: line =>
+        // 卡死看门狗：任何一行 stdout 输出都会刷新计时；超时未输出 → 取消本次运行。
+        // 与调用方取消区分：调用方（服务关闭）的取消原样上抛；卡死按“失败”返回，
+        // 交给 TranscodeAsync 现有的硬解/硬编兜底逻辑接手（可能换软解/软编后能继续）。
+        // 看门狗挂在 stallCts 上：RunAsync 正常结束/取消后，finally 的 Cancel 立即终止它，
+        // 不会空转到超时阈值才退出。
+        using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var lastLineTicks = Environment.TickCount64;
+        var watchdog = Task.Run(async () =>
         {
-            // 新版 ffmpeg 输出 out_time_us（微秒）；旧版只有 out_time_ms（历史遗留，单位实为微秒）；
-            // 再兜一层 out_time（HH:MM:SS.ffffff）。三者任一解析成功即上报进度。
-            long us;
-            if (line.StartsWith("out_time_us=", StringComparison.Ordinal))
+            try
             {
-                if (!long.TryParse(line.AsSpan("out_time_us=".Length), NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out us)) return;
+                while (true)
+                {
+                    await Task.Delay(StallCheckInterval, stallCts.Token);
+                    if (Environment.TickCount64 - Interlocked.Read(ref lastLineTicks) >= StallTimeoutMs)
+                    {
+                        try { stallCts.Cancel(); } catch (ObjectDisposedException) { }
+                        return;
+                    }
+                }
             }
-            else if (line.StartsWith("out_time_ms=", StringComparison.Ordinal))
-            {
-                if (!long.TryParse(line.AsSpan("out_time_ms=".Length), NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out us)) return;
-            }
-            else if (line.StartsWith("out_time=", StringComparison.Ordinal))
-            {
-                if (!TimeSpan.TryParse(line.AsSpan("out_time=".Length), CultureInfo.InvariantCulture, out var ts)) return;
-                us = Math.Max(0, (long)ts.TotalMicroseconds);
-            }
-            else return;
+            catch (OperationCanceledException) { /* 令牌取消（正常结束 / 服务关闭）：看门狗退出 */ }
+        }, CancellationToken.None);
 
-            if (totalDurationUs <= 0) return;
-            var fraction = Math.Clamp((double)us / totalDurationUs, 0.0, 1.0);
-            if (fraction < 1 && fraction - lastReported < 0.01) return; // 限频：1% 粒度
-            lastReported = fraction;
-            progress?.Report(new TranscodeProgress(
-                fraction,
-                TimeSpan.FromMicroseconds(us),
-                TimeSpan.FromMicroseconds(totalDurationUs)));
-        }, cancellationToken: ct, maxStdoutLines: 0, maxStderrLines: 200);
+        double lastReported = -1;
+        ProcessResult result;
+        try
+        {
+            result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, args, onStdoutLine: line =>
+            {
+                Interlocked.Exchange(ref lastLineTicks, Environment.TickCount64);
+                // 新版 ffmpeg 输出 out_time_us（微秒）；旧版只有 out_time_ms（历史遗留，单位实为微秒）；
+                // 再兜一层 out_time（HH:MM:SS.ffffff）。三者任一解析成功即上报进度。
+                long us;
+                if (line.StartsWith("out_time_us=", StringComparison.Ordinal))
+                {
+                    if (!long.TryParse(line.AsSpan("out_time_us=".Length), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out us)) return;
+                }
+                else if (line.StartsWith("out_time_ms=", StringComparison.Ordinal))
+                {
+                    if (!long.TryParse(line.AsSpan("out_time_ms=".Length), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out us)) return;
+                }
+                else if (line.StartsWith("out_time=", StringComparison.Ordinal))
+                {
+                    if (!TimeSpan.TryParse(line.AsSpan("out_time=".Length), CultureInfo.InvariantCulture, out var ts)) return;
+                    us = Math.Max(0, (long)ts.TotalMicroseconds);
+                }
+                else return;
+
+                if (totalDurationUs <= 0) return;
+                var fraction = Math.Clamp((double)us / totalDurationUs, 0.0, 1.0);
+                if (fraction < 1 && fraction - lastReported < 0.01) return; // 限频：1% 粒度
+                lastReported = fraction;
+                progress?.Report(new TranscodeProgress(
+                    fraction,
+                    TimeSpan.FromMicroseconds(us),
+                    TimeSpan.FromMicroseconds(totalDurationUs)));
+            }, cancellationToken: stallCts.Token, maxStdoutLines: 0, maxStderrLines: 200);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 看门狗取消（卡死）：按失败返回，走 TranscodeAsync 的重试/软编兜底
+            return new ProcessResult(-1, "", "ffmpeg 长时间无进展（可能卡死），已终止");
+        }
+        finally
+        {
+            try { stallCts.Cancel(); } catch (ObjectDisposedException) { }
+            await watchdog; // 看门狗随令牌立即退出；内部已捕获取消异常，不会抛
+        }
+        return result;
     }
 
     /// <summary>产物类型 → ffmpeg 封装器名（HLS 显式 hls；m4a 也走 mp4 封装器）。</summary>

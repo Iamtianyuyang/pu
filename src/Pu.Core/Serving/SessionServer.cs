@@ -66,8 +66,37 @@ public sealed class SessionServer : IAsyncDisposable
     private volatile bool _stopping;
     private readonly WebApplication _app;
 
+    /// <summary>局域网 IP 重解析 TTL：Wi-Fi 切换 / DHCP 重分配后新 URL 自动跟上新地址。</summary>
+    private const long LanResolveTtlMs = 60_000;
+    private readonly object _lanGate = new();
+    private string? _lanIp;
+    private long _lanResolveTicks;
+
     /// <summary>服务生命周期令牌：传给后台任务（探测/转码/抽字幕），StopAsync 时统一取消。</summary>
     public CancellationToken ShutdownToken => _lifetime.Token;
+
+    /// <summary>
+    /// 局域网 IPv4（60 秒 TTL 惰性重解析）。启动后 Wi-Fi 切换 / DHCP 重分配会换 IP，
+    /// 新生成的链接与二维码自动跟上新地址；旧地址已不可达，留在旧页面上的链接本就失效。
+    /// </summary>
+    public string? LanIp
+    {
+        get
+        {
+            if (Environment.TickCount64 - Interlocked.Read(ref _lanResolveTicks) >= LanResolveTtlMs)
+            {
+                lock (_lanGate)
+                {
+                    if (Environment.TickCount64 - Interlocked.Read(ref _lanResolveTicks) >= LanResolveTtlMs)
+                    {
+                        Interlocked.Exchange(ref _lanResolveTicks, Environment.TickCount64);
+                        _lanIp = LanAddress.GetLanIpv4();
+                    }
+                }
+            }
+            return _lanIp;
+        }
+    }
 
     /// <summary>媒体传输开始：刷新该条目的最近传输时刻（LRU 保护窗口内不淘汰）。</summary>
     internal void BeginTransfer(string token) => _lastTransfer[token] = DateTime.UtcNow.Ticks;
@@ -79,7 +108,6 @@ public sealed class SessionServer : IAsyncDisposable
     private long _lastMediaLogTicks;
 
     public int Port { get; }
-    public string? LanIp { get; }
     public string? LatestUrl { get; private set; }
     public int JobCount => _jobs.Count;
     /// <summary>会话数（信息用；空闲退出只看 ActiveJobCount + IdleFor，见 Program.IdleWatchAsync）。</summary>
@@ -90,11 +118,12 @@ public sealed class SessionServer : IAsyncDisposable
     public TimeSpan IdleFor => TimeSpan.FromTicks(DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastActivityTicks));
     public static TimeSpan IdleTimeout => TimeSpan.FromMinutes(30);
 
-    private SessionServer(WebApplication app, int port, string? lanIp)
+    private SessionServer(WebApplication app, int port)
     {
         _app = app;
         Port = port;
-        LanIp = lanIp;
+        _lanIp = LanAddress.GetLanIpv4();
+        _lanResolveTicks = Environment.TickCount64;
     }
 
     public static async Task<SessionServer> StartAsync(int preferredPort = 8000, CancellationToken ct = default)
@@ -124,7 +153,19 @@ public sealed class SessionServer : IAsyncDisposable
         builder.WebHost.UseKestrel(o => o.Listen(IPAddress.Any, port));
         var app = builder.Build();
 
-        var server = new SessionServer(app, port, LanAddress.GetLanIpv4());
+        // 安全头：nosniff 防类型混淆；CSP 收紧到本服务自身资源（页面含内嵌脚本/样式需 'unsafe-inline'，
+        // hls.js MSE 播放用 blob: 媒体源；frame-ancestors 防页面被嵌进第三方站点点击劫持）
+        app.Use(async (context, next) =>
+        {
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.ContentSecurityPolicy =
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+                + "worker-src blob:; frame-ancestors 'none'"; // hls.js 默认从 blob: 建 worker，不加会被 CSP 拦下回退主线程
+            await next();
+        });
+
+        var server = new SessionServer(app, port);
 
         app.MapGet("/s/{token}", (string token) =>
         {
@@ -178,8 +219,12 @@ public sealed class SessionServer : IAsyncDisposable
 
         app.MapGet("/s/{token}/status", (string token) =>
         {
-            server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
+            // 空闲退出按“真实活动”计时：只有转码中 / 字幕后补中的轮询算活跃（用户正在等待），
+            // 已定案后的轮询不再续命——否则手机端开着的状态页会让服务永不空闲退出。
+            // 播放中的媒体请求本身就 Touch，不受影响。
+            if (job.State == JobState.Transcoding
+                || (job.SubtitlesPending && job.State != JobState.Failed)) server.Touch();
             return Results.Json(server.ToDto(job), JobStatusJsonContext.Default.JobStatusDto);
         });
 
@@ -226,8 +271,9 @@ public sealed class SessionServer : IAsyncDisposable
         });
         app.MapGet("/f/{token}/status", (string token) =>
         {
-            server.Touch();
             if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
+            // 文件夹页 2s 轮询同样不续命（防永不空闲退出）；列表里只要有任务在转码就续
+            if (server.ActiveJobCount > 0) server.Touch();
             return Results.Json(server.ToFolderDto(folder), JobStatusJsonContext.Default.FolderStatusDto);
         });
         app.MapPost("/f/{token}/open/{index:int}", async (string token, int index) =>
@@ -258,6 +304,7 @@ public sealed class SessionServer : IAsyncDisposable
     public async Task<MediaJob> SubmitAsync(string sourcePath, CancellationToken ct = default)
     {
         ThrowIfStopping();
+        SweepStaleSources();
         // 源文件指纹（路径|大小|mtime）作去重键：源被替换 → 指纹变 → 不误复用旧任务
         var key = CacheKey.For(sourcePath);
         if (await TryReuseExistingAsync(key) is { } live)
@@ -410,6 +457,29 @@ public sealed class SessionServer : IAsyncDisposable
         return task;
     }
 
+    /// <summary>清理已定案的源指纹条目，防长驻进程 _bySource 无限膨胀：
+    /// 失败任务立即移除（重提交可重建）；可播且超过传输保护窗口的移除（重提交走产物复用，不重转码）。
+    /// 从未被打开过的可播任务保留——二维码可能还在用户手里。
+    /// _jobs 本身按设计保留：旧 token 的页面/二维码仍需可访问。</summary>
+    private void SweepStaleSources()
+    {
+        var cutoff = DateTime.UtcNow.Ticks - TransferProtectWindow.Ticks;
+        foreach (var (key, token) in _bySource)
+        {
+            if (!_jobs.TryGetValue(token, out var job))
+            {
+                _bySource.TryRemove(key, out _);
+                continue;
+            }
+            if (job.State == JobState.Failed) { _bySource.TryRemove(key, out _); continue; }
+            if (job.State == JobState.Serving
+                && !job.SubtitlesPending
+                && _lastTransfer.TryGetValue(token, out var last)
+                && last < cutoff)
+                _bySource.TryRemove(key, out _);
+        }
+    }
+
     /// <summary>需要 LRU 保护的中央缓存条目：转码中（.tmp 写入中）与最近窗口内有传输的条目。
     /// 已就绪且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。
     /// 顺带清理 _lastTransfer 中超龄的书签（超出保护窗口的条目已无保护意义，防字典无限增长）。</summary>
@@ -430,8 +500,13 @@ public sealed class SessionServer : IAsyncDisposable
             // 转码中、字幕后补中（直出/复用命中：字幕还在往 {key}/subs 写）、窗口内有传输 → 保护。
             // 已定案且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。
             if (job.State != JobState.Transcoding && !job.SubtitlesPending && !recentlyPlayed) continue;
-            if (CacheManager.EntryDirFor(job.ArtifactPath) is { } entry)
-                set.Add(entry);
+            // 直出任务：产物即源文件（不在缓存），但字幕写入中央缓存 {源指纹}/subs——
+            // 按源指纹补算保护条目，否则抽字幕窗口期该条目可能被 LRU 删掉
+            var entry = CacheManager.EntryDirFor(job.ArtifactPath)
+                ?? (string.Equals(job.ArtifactPath, job.SourcePath, StringComparison.OrdinalIgnoreCase)
+                    ? CacheKey.ArtifactDirFor(job.SourcePath)
+                    : null);
+            if (entry is not null) set.Add(entry);
         }
         return set;
     }
@@ -459,15 +534,16 @@ public sealed class SessionServer : IAsyncDisposable
     public async Task<FolderJob> SubmitFolderAsync(string folderPath, CancellationToken ct = default)
     {
         ThrowIfStopping();
-        var files = await Task.Run(() => FolderScan.Scan(folderPath, MediaExtensions.Defaults), ct);
-        if (files.Count == 0)
+        var scan = await Task.Run(() => FolderScan.ScanDetailed(folderPath, MediaExtensions.Defaults), ct);
+        if (scan.Files.Count == 0)
             throw new InvalidOperationException("文件夹里没有媒体文件");
         var folder = new FolderJob
         {
             Token = RandomNumberGenerator.GetHexString(32),
             FolderPath = folderPath,
             Title = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar)),
-            Files = files,
+            Files = scan.Files,
+            Truncated = scan.Truncated,
         };
         _folders[folder.Token] = folder;
         LatestUrl = UrlForFolder(folder);
@@ -645,7 +721,7 @@ public sealed class SessionServer : IAsyncDisposable
             string.IsNullOrEmpty(s.Title) && LangNames.TryGetValue(s.Language, out var n) ? n : s.Title)).ToList();
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
-            job.Title, job.PlanExplanation, subs, job.IsHls, job.SubtitlesPending);
+            job.Title, job.PlanExplanation, subs, job.IsHls, job.SubtitlesPending, job.HasVideo);
     }
 
     private FolderStatusDto ToFolderDto(FolderJob folder)
@@ -657,17 +733,12 @@ public sealed class SessionServer : IAsyncDisposable
                 state = job.State.ToString().ToLowerInvariant();
             return new FolderFileDto(f.Index, f.Name, f.SizeBytes, state);
         }).ToList();
-        return new FolderStatusDto(folder.Title, files.Count, files);
+        return new FolderStatusDto(folder.Title, files.Count, folder.Truncated, files);
     }
 
     private static string Describe(MediaInfo info)
     {
-        var size = info.SizeBytes switch
-        {
-            >= 1L << 30 => $"{info.SizeBytes / (double)(1L << 30):F1} GB",
-            >= 1L << 20 => $"{info.SizeBytes / (double)(1L << 20):F0} MB",
-            _ => $"{info.SizeBytes} B",
-        };
+        var size = HumanSize.Format(info.SizeBytes);
         return info.Video is { } v
             ? $"{v.Codec} {v.BitDepth}bit {v.Width}×{v.Height} / 音频 {info.Audio?.Codec ?? "无"} / {size}"
             : $"音频 {info.Audio?.Codec ?? "无"} / {size}";
@@ -680,7 +751,7 @@ public sealed class SessionServer : IAsyncDisposable
     {
         if (string.IsNullOrEmpty(u) || u.Length > 512) return false;
         if (!Uri.TryCreate(u, UriKind.Absolute, out var uri)) return false;
-        if (uri.Scheme is not ("http" or "https")) return false;
+        if (uri.Scheme != "http") return false; // 本服务只监听 http；https 指向同端口连不上，直接拒绝
         if (uri.Port != port) return false;
         return uri.IsLoopback
             || LocalHosts.Value.Contains(uri.Host)

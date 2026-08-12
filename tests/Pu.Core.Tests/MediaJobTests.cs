@@ -56,12 +56,13 @@ public class MediaJobTests
     }
 
     [Fact]
-    public void SetFailed_状态失败且字幕未定案()
+    public void SetFailed_状态失败且字幕一并定案()
     {
+        // 失败即定案：SubtitlesPending 归位，订阅者退订/状态页轮询不再续命
         var job = NewJob();
         job.SetFailed("boom");
         Assert.Equal(JobState.Failed, job.State);
         Assert.Equal("boom", job.Error);
-        Assert.True(job.SubtitlesPending);
+        Assert.False(job.SubtitlesPending);
     }
 }

@@ -6,6 +6,7 @@ using Pu.App.Shell;
 using Pu.App.Tray;
 using Pu.App.Ui;
 using Pu.Core.Cache;
+using Pu.Core.Common;
 using Pu.Core.Ipc;
 using Pu.Core.Serving;
 
@@ -20,14 +21,36 @@ public static class Program
     private static readonly HashSet<MediaJob> WiredJobs = [];
     private static readonly object WireGate = new();
 
-    /// <summary>给 job 挂进度通知：同一个 job 只挂一次（文件夹重复点开复用同一 job）。</summary>
+    /// <summary>给 job 挂进度通知：同一个 job 只挂一次（文件夹重复点开复用同一 job）。
+    /// job 定案（可播且字幕已定 / 失败）后自动退订——长驻进程不累积悬挂的事件引用
+    /// （job 对象经订阅委托被静态集合永久持有，文件夹模式开过几百集就涨几百份）。</summary>
     private static void WireJob(MediaJob job, MainWindow window)
     {
+        void Handler(MediaJob j)
+        {
+            window.SetJob(j);
+            // 最后一个事件（字幕定案 / 失败）到来后即退订
+            if (j.State != JobState.Transcoding && !j.SubtitlesPending)
+            {
+                j.Changed -= Handler;
+                lock (WireGate) WiredJobs.Remove(j);
+            }
+        }
+
+        // 先订阅、后查定案：check-then-subscribe 之间定案的 job 会错过最后一个事件，
+        // 永远不触发退订，静态集合 WiredJobs 只进不出（修复点：不再先 Add 再检查）
         lock (WireGate)
         {
             if (!WiredJobs.Add(job)) return;
         }
-        job.Changed += _ => window.SetJob(job);
+        job.Changed += Handler;
+        // 订阅瞬间已定案（复用命中 / 直出已可播且字幕就绪 / 失败）：不会再发事件，立即退订
+        // （初始渲染由调用方 ActivateJob 完成，这里只负责不占集合）
+        if (job.State != JobState.Transcoding && !job.SubtitlesPending)
+        {
+            job.Changed -= Handler;
+            lock (WireGate) WiredJobs.Remove(job);
+        }
     }
 
     public static async Task<int> Main(string[] args)
@@ -229,10 +252,11 @@ public static class Program
         { IsBackground = true, Name = "pu-ui" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        ready.Wait(TimeSpan.FromSeconds(5));
+        // 15 秒：单文件自解压 + 杀软扫描首扫时 WPF 首次初始化可能超过 5 秒，超时是硬失败，放宽
+        ready.Wait(TimeSpan.FromSeconds(15));
         if (error is not null) throw error;
-        if (instance is null) throw new InvalidOperationException("主窗口启动超时");
-        instance.SetBaseUrl($"http://{server.LanIp ?? "localhost"}:{server.Port}");
+        if (instance is null) throw new InvalidOperationException("主窗口启动超时（15 秒）");
+        instance.SetBaseUrl(() => $"http://{server.LanIp ?? "localhost"}:{server.Port}");
         instance.JobStateLookup = server.JobStateFor; // 文件夹行徽标：转码中/就绪/失败
         return instance;
     }
@@ -259,8 +283,10 @@ public static class Program
                 }
             })
             { IsBackground = true, Name = "pu-tray" };
+            // 托盘回调消息经窗口分发，与主窗口一致走 STA，避免部分 Windows 版本上 MTA 托盘回调异常
+            thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
-            ready.Wait(TimeSpan.FromSeconds(5));
+            ready.Wait(TimeSpan.FromSeconds(15));
             if (error is not null) throw error;
             if (instance is null) throw new InvalidOperationException("托盘启动超时");
 
@@ -358,7 +384,16 @@ public static class Program
         var src = Environment.ProcessPath!;
         if (!string.Equals(src, dest, StringComparison.OrdinalIgnoreCase))
         {
-            File.Copy(src, dest, overwrite: true);
+            try
+            {
+                File.Copy(src, dest, overwrite: true);
+            }
+            catch (IOException)
+            {
+                // 最常见根因：服务实例正在运行，运行中的 exe 无法覆盖
+                throw new InvalidOperationException(
+                    "安装失败：目标 pu.exe 正被占用。请先退出正在运行的噗~噗噗~~噗噗噗噗~~~~（窗口/托盘），再执行 --install。");
+            }
             Console.WriteLine($"已安装到 {dest}");
         }
         else
@@ -375,8 +410,16 @@ public static class Program
             if (!string.Equals(Path.GetFullPath(srcFfmpeg), Path.GetFullPath(destFfmpeg),
                     StringComparison.OrdinalIgnoreCase))
             {
-                CopyDirectory(srcFfmpeg, destFfmpeg);
-                Console.WriteLine($"已复制 ffmpeg → {destFfmpeg}");
+                try
+                {
+                    CopyDirectory(srcFfmpeg, destFfmpeg);
+                    Console.WriteLine($"已复制 ffmpeg → {destFfmpeg}");
+                }
+                catch (IOException ex)
+                {
+                    // 个别文件被占用（如旧实例正在用）：安装继续，运行时按 PATH/配置定位 ffmpeg
+                    Console.WriteLine($"警告: ffmpeg 复制不完整（{ex.Message}），将按 PATH/配置定位 ffmpeg。");
+                }
             }
         }
         else
@@ -392,6 +435,12 @@ public static class Program
 
     private static void UninstallSelf()
     {
+        // 服务实例运行时卸载会删掉正在使用的缓存/日志/配置目录 → 先检查后动手（与 --clean 一致）
+        if (IsAnotherInstanceRunning())
+        {
+            Console.Error.WriteLine("噗~噗噗~~噗噗噗噗~~~~ 正在运行中——请先退出（窗口/托盘）再执行 --uninstall。");
+            return;
+        }
         // 枚举全部扩展名注销：配置里已删掉的旧扩展名也一并清掉，不留残键
         ShellRegister.Unregister();
         Console.WriteLine("已移除右键菜单（全部扩展名 + 文件夹）。");
@@ -406,8 +455,11 @@ public static class Program
                 if (string.Equals(Environment.ProcessPath, dest, StringComparison.OrdinalIgnoreCase))
                 {
                     var bat = Path.Combine(Path.GetTempPath(), $"pu-uninstall-{Environment.ProcessId}.cmd");
+                    // cmd 引号内的 % 仍会做变量展开、^ 仍是转义符：路径含这两个字符必须加倍，
+                    // 否则 del 的目标会被改写，卸载残留
+                    var escapedDest = dest.Replace("%", "%%").Replace("^", "^^");
                     File.WriteAllText(bat,
-                        $"@echo off\r\ntimeout /t 1 /nobreak > nul\r\ndel /f /q \"{dest}\"\r\ndel /f /q \"%~f0\"\r\n");
+                        $"@echo off\r\ntimeout /t 1 /nobreak > nul\r\ndel /f /q \"{escapedDest}\"\r\ndel /f /q \"%~f0\"\r\n");
                     Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{bat}\"")
                     {
                         UseShellExecute = true,
@@ -428,6 +480,10 @@ public static class Program
         }
         try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
         try { Directory.Delete(Path.Combine(destDir, "ffmpeg"), recursive: true); } catch { }
+        // 共享数据（缓存/日志/配置）一并清理：README 承诺卸载后 %LOCALAPPDATA%\Pu 不留残渣。
+        // 若 pu.exe 正从该目录运行（自删除场景），目录被占用删除会失败——延迟删除的 bat 会收尾 exe，
+        // 残留的配置/缓存是受限降级路径，可接受。
+        try { Directory.Delete(destDir, recursive: true); } catch { }
     }
 
     /// <summary>递归复制目录（保留相对结构，覆盖已有文件）。</summary>
@@ -468,16 +524,9 @@ public static class Program
         var (entries, bytes) = CacheManager.Stats();
         var freed = CacheManager.Clean();
         var freedSidecar = ArtifactLocator.CleanRegistered();
-        Console.WriteLine($"已清空缓存：中央缓存 {entries} 项 / {FormatSize(bytes)}"
-            + $"，就地产物 {FormatSize(freedSidecar)}（共释放 {FormatSize(freed + freedSidecar)}）。");
+        Console.WriteLine($"已清空缓存：中央缓存 {entries} 项 / {HumanSize.Format(bytes)}"
+            + $"，就地产物 {HumanSize.Format(freedSidecar)}（共释放 {HumanSize.Format(freed + freedSidecar)}）。");
     }
-
-    private static string FormatSize(long bytes) => bytes switch
-    {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):F0} MB",
-        _ => $"{bytes} B",
-    };
 
     private static string VersionString =>
         typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";

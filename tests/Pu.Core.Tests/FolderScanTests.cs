@@ -46,6 +46,69 @@ public class FolderScanTests
     }
 
     [Fact]
+    public void 超过上限_标记截断()
+    {
+        using var dir = new TempDir();
+        for (int i = 0; i < 20; i++)
+            File.WriteAllBytes(Path.Combine(dir.Path, $"{i:D2}.mp4"), [1]);
+
+        var truncated = FolderScan.ScanDetailed(dir.Path, MediaExtensions.Defaults, maxFiles: 10);
+        Assert.Equal(10, truncated.Files.Count);
+        Assert.True(truncated.Truncated, "还有更多文件未列出 → 应标记截断");
+
+        // 恰好满上限（无截断）
+        using var exact = new TempDir();
+        for (int i = 0; i < 10; i++)
+            File.WriteAllBytes(Path.Combine(exact.Path, $"{i:D2}.mp4"), [1]);
+        var notTruncated = FolderScan.ScanDetailed(exact.Path, MediaExtensions.Defaults, maxFiles: 10);
+        Assert.Equal(10, notTruncated.Files.Count);
+        Assert.False(notTruncated.Truncated);
+    }
+
+    [Fact]
+    public void 自然排序_EP2排在EP10前()
+    {
+        using var dir = new TempDir();
+        File.WriteAllBytes(Path.Combine(dir.Path, "EP10.mp4"), [1]);
+        File.WriteAllBytes(Path.Combine(dir.Path, "EP2.mp4"), [1]);
+        File.WriteAllBytes(Path.Combine(dir.Path, "EP1.mp4"), [1]);
+        File.WriteAllBytes(Path.Combine(dir.Path, "EP01.mp4"), [1]); // 数值相等（01 vs 1）：较长者排后
+
+        var files = FolderScan.Scan(dir.Path, MediaExtensions.Defaults);
+
+        Assert.Equal(["EP1.mp4", "EP01.mp4", "EP2.mp4", "EP10.mp4"], files.Select(f => f.Name));
+    }
+
+    [Fact]
+    public void 截断发生在排序之后_保留自然序前N个()
+    {
+        using var dir = new TempDir();
+        for (int i = 1; i <= 20; i++)
+            File.WriteAllBytes(Path.Combine(dir.Path, $"EP{i}.mp4"), [1]);
+
+        // 无论枚举顺序如何，保留下来的必须是自然序前 10 个（EP1–EP10），而非枚举顺序的任意 10 个
+        var r = FolderScan.ScanDetailed(dir.Path, MediaExtensions.Defaults, maxFiles: 10);
+        Assert.Equal(10, r.Files.Count);
+        Assert.True(r.Truncated);
+        Assert.Equal(Enumerable.Range(1, 10).Select(i => $"EP{i}.mp4"), r.Files.Select(f => f.Name));
+        Assert.Equal(Enumerable.Range(0, 10), r.Files.Select(f => f.Index));
+    }
+
+    [Fact]
+    public void 深度超限_同样标记截断()
+    {
+        using var dir = new TempDir();
+        var deep = dir.Path;
+        for (int i = 0; i < 10; i++) deep = Path.Combine(deep, $"d{i}");
+        Directory.CreateDirectory(deep);
+        File.WriteAllBytes(Path.Combine(deep, "hidden.mp4"), [1]);
+
+        var shallow = FolderScan.ScanDetailed(dir.Path, MediaExtensions.Defaults, maxDepth: 3);
+        Assert.Empty(shallow.Files);
+        Assert.True(shallow.Truncated, "深度超限处还有文件被跳过 → 应提示列表不完整");
+    }
+
+    [Fact]
     public void 超过深度上限_不再深入()
     {
         using var dir = new TempDir();

@@ -30,7 +30,17 @@ public sealed class EncoderCatalog
 
     public static async Task<EncoderCatalog> DetectAsync(CancellationToken ct = default)
     {
-        var result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, ["-hide_banner", "-encoders"], cancellationToken: ct);
+        ProcessResult result;
+        try
+        {
+            result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, ["-hide_banner", "-encoders"],
+                cancellationToken: ct, timeout: TimeSpan.FromSeconds(15));
+        }
+        catch (TimeoutException)
+        {
+            // 探测卡死（罕见）：按无硬件可用处理，保证至少能软编
+            return new EncoderCatalog(["libx264"], "编码器探测超时，回退 libx264 软编");
+        }
         var found = new List<string>();
         foreach (var line in result.StdOut.Split('\n'))
         {
@@ -55,6 +65,9 @@ public sealed class EncoderCatalog
         return new EncoderCatalog(usable.Append("libx264"), note);
     }
 
+    /// <summary>lavfi 试编超时：驱动卡死的试编会挂起整个探测，15 秒内不产出就视为不可用。</summary>
+    private static readonly TimeSpan TestEncodeTimeout = TimeSpan.FromSeconds(15);
+
     /// <summary>用 lavfi 生成 8 帧小视频试编，验证编码器在这台机器上真的可用（硬件/驱动都在）。</summary>
     private static async Task<bool> TestEncodeAsync(string encoder, CancellationToken ct)
     {
@@ -65,12 +78,12 @@ public sealed class EncoderCatalog
                  "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
                  "-frames:v", "8", "-pix_fmt", "yuv420p",
                  "-c:v", encoder, "-f", "null", "-"],
-                cancellationToken: ct);
+                cancellationToken: ct, timeout: TestEncodeTimeout);
             return result.ExitCode == 0;
         }
         catch
         {
-            return false;
+            return false; // 含 TimeoutException：驱动卡死按不可用处理
         }
     }
 

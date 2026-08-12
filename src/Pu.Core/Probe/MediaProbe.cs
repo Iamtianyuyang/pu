@@ -6,16 +6,28 @@ namespace Pu.Core.Probe;
 
 public static class MediaProbe
 {
+    /// <summary>ffprobe 探测超时：坏文件 / 被锁文件（下载中）可能让 ffprobe 挂起，不能无限等。</summary>
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
+
     public static async Task<MediaInfo> ProbeAsync(string filePath, CancellationToken ct = default)
     {
-        var result = await ProcessRunner.RunAsync(FfmpegLocator.ProbeExe, new[]
+        ProcessResult result;
+        try
         {
-            "-v", "error",
-            "-print_format", "json",
-            "-show_format",
-            "-show_streams",
-            filePath,
-        }, cancellationToken: ct);
+            result = await ProcessRunner.RunAsync(FfmpegLocator.ProbeExe, new[]
+            {
+                "-v", "error",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                filePath,
+            }, cancellationToken: ct, timeout: ProbeTimeout);
+        }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException(
+                $"文件分析超时（{(int)ProbeTimeout.TotalSeconds} 秒），文件可能已损坏或正被其他程序占用: {filePath}");
+        }
 
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"ffprobe 失败: {result.StdErr.Trim()}");

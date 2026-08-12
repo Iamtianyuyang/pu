@@ -55,7 +55,7 @@ public sealed class MediaJob
     public void UpdateProgress(double fraction)
     {
         lock (_gate) { _progress = Math.Clamp(fraction, 0, 1); }
-        Changed?.Invoke(this);
+        RaiseChanged();
     }
 
     /// <summary>视频可播（直出/复用命中：立即调用，不等字幕；字幕就绪后单独补发）。
@@ -63,26 +63,42 @@ public sealed class MediaJob
     public void SetServing()
     {
         lock (_gate) { _state = JobState.Serving; _progress = 1; _subsDone = false; }
-        Changed?.Invoke(this);
+        RaiseChanged();
     }
 
     /// <summary>一次性置可播 + 字幕就绪（全转码路径产物落位后、测试用）。</summary>
     public void SetServing(IReadOnlyList<SubtitleFile> subtitles)
     {
         lock (_gate) { _state = JobState.Serving; _progress = 1; _subtitles = subtitles; _subsDone = true; }
-        Changed?.Invoke(this);
+        RaiseChanged();
     }
 
     /// <summary>字幕就绪后补发（空表 = 无字幕/抽取失败，只丢字幕不拖垮视频）。</summary>
     public void SetSubtitles(IReadOnlyList<SubtitleFile> subtitles)
     {
         lock (_gate) { _subtitles = subtitles; _subsDone = true; }
-        Changed?.Invoke(this);
+        RaiseChanged();
     }
 
     public void SetFailed(string error)
     {
-        lock (_gate) { _state = JobState.Failed; _error = error; }
-        Changed?.Invoke(this);
+        // 失败即定案：字幕不再补发，_subsDone 置位让 SubtitlesPending 归位——
+        // 订阅者据此退订（WiredJobs 不累积）、状态页轮询不再续命（空闲退出按真实活动计时）
+        lock (_gate) { _state = JobState.Failed; _error = error; _subsDone = true; }
+        RaiseChanged();
+    }
+
+    /// <summary>触发状态变更通知；订阅者异常一律吞掉——UI 订阅者抛异常不能把转码链路带崩
+    /// （UpdateProgress 从 ffmpeg 读行回调链触发，异常会经 ProcessRunner 把转码误判为失败）。
+    /// 逐个调用：单个订阅者抛异常不影响其余订阅者收到通知（多播委托会中止在第一个异常处）。</summary>
+    private void RaiseChanged()
+    {
+        var handlers = Changed?.GetInvocationList();
+        if (handlers is null) return;
+        foreach (var d in handlers)
+        {
+            try { ((Action<MediaJob>)d)(this); }
+            catch { /* 订阅者异常与媒体链路无关 */ }
+        }
     }
 }

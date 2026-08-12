@@ -1,3 +1,5 @@
+using Pu.Core.Common;
+
 namespace Pu.App.Ui;
 
 /// <summary>服务模式日志：WinExe 无控制台，关键事件写入 %LOCALAPPDATA%\Pu\pu.log（--debug 时同时输出控制台）。</summary>
@@ -13,8 +15,7 @@ public static class Log
         set => _console = value;
     }
 
-    private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu", "pu.log");
+    private static string FilePath => Path.Combine(FfmpegLocator.ConfigDir, "pu.log");
 
     public static void Info(string msg) => Write("INFO", msg);
     public static void Error(string msg) => Write("ERROR", msg);

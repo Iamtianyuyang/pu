@@ -20,6 +20,11 @@ public static class SubtitleExtractor
 
     private const string MetaFileName = ".meta";
 
+    /// <summary>单次 ffmpeg 调用的超时：字幕是尽力而为的副产物，卡死不能拖住整个会话。</summary>
+    private static readonly TimeSpan CallTimeout = TimeSpan.FromMinutes(5);
+    /// <summary>整次抽取（单遍 + 逐条兜底）的总截止时间：防多字幕 + 坏流组合拖到无穷。</summary>
+    private static readonly TimeSpan OverallDeadline = TimeSpan.FromMinutes(15);
+
     public static async Task<List<SubtitleFile>> ExtractAsync(
         string sourcePath, MediaInfo info, string artifactDir, CancellationToken ct = default)
     {
@@ -35,7 +40,13 @@ public static class SubtitleExtractor
 
         Directory.CreateDirectory(Path.Combine(artifactDir, "subs"));
 
-        var singlePass = await ExtractSinglePassAsync(sourcePath, targets, artifactDir, ct);
+        // 总截止时间：单遍 + 逐条兜底共用。到点后 ffmpeg 调用被取消，取消异常向上传播，
+        // 调用方按「字幕放弃」处理（视频不受影响）——挂死的抽取不能再堵住 job 定案。
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(OverallDeadline);
+        var dc = deadline.Token;
+
+        var singlePass = await ExtractSinglePassAsync(sourcePath, targets, artifactDir, dc);
         if (singlePass is not null)
         {
             WriteSourceMeta(sourcePath, artifactDir);
@@ -54,7 +65,7 @@ public static class SubtitleExtractor
                 "-map", $"0:{s.Index}", // 绝对流序号
                 "-c:s", "webvtt",
                 vtt,
-            }, cancellationToken: ct);
+            }, cancellationToken: dc, timeout: CallTimeout);
             if (r.ExitCode == 0 && File.Exists(vtt))
                 result.Add(new SubtitleFile(s.Index, s.Codec, s.Language, s.Title, vtt));
         }

@@ -114,6 +114,7 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
 #playerCard{padding:12px}
 .playerWrap{position:relative;border-radius:16px;overflow:hidden;background:#0f1626;
   aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
+.playerWrap.audio{aspect-ratio:auto;height:72px}
 video{width:100%;height:100%;display:block;outline:none}
 .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(8,12,22,.55);transition:opacity .25s}
@@ -206,6 +207,7 @@ video{width:100%;height:100%;display:block;outline:none}
       errorCard=$('errorCard'), errorText=$('errorText'),
       pct=$('pct'), bar=$('bar'), barFill=$('barFill'), progHint=$('progHint'),
       video=$('v'), subsRow=$('subsRow'),
+      playerWrap=$('playerWrap'),
       loadingOverlay=$('loadingOverlay'), playOverlay=$('playOverlay'),
       playBtn=$('playBtn'), urlText=$('urlText');
 
@@ -242,13 +244,23 @@ video{width:100%;height:100%;display:block;outline:none}
       hide(qrCard); hide(progressCard); hide(errorCard); show(playerCard);
       if (!video.src && !hlsStarted){
         hlsStarted = true;
+        var isAudio = st.hasVideo === false; // 纯音频（mp3/m4a…）：video 元素自带控件即可，收窄黑框、不弹大播放键
         var url = st.hls
           ? '/s/' + token + '/hls/index.m3u8'
           : '/s/' + token + '/media';
         var stopLoading = function(){ hide(loadingOverlay); };
-        var playIt = function(){ video.play().catch(function(){ hide(loadingOverlay); show(playOverlay); }); };
-        // HLS：Safari 原生播 m3u8；其它浏览器用 hls.js（MSE）
-        if (st.hls && window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')){
+        var failPlay = function(){ hide(loadingOverlay); setPill('播放失败', 'bad'); };
+        var playIt = function(){ video.play().catch(function(){ hide(loadingOverlay); if (!isAudio) show(playOverlay); }); };
+        if (isAudio){
+          playerWrap.classList.add('audio');
+          hide(playOverlay);
+          video.src = url;
+          video.addEventListener('canplay', stopLoading, { once:true });
+          video.addEventListener('loadeddata', stopLoading, { once:true }); // 有的移动端只发这个
+          video.addEventListener('error', failPlay);
+          playIt();
+        } else if (st.hls && window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')){
+          // HLS：hls.js（MSE）
           var hls = new Hls();
           hls.loadSource(url);
           hls.attachMedia(video);
@@ -262,21 +274,19 @@ video{width:100%;height:100%;display:block;outline:none}
           video.addEventListener('canplay', stopLoading, { once:true });
           video.addEventListener('loadeddata', stopLoading, { once:true });
         } else {
+          // 直出 MP4 / Safari 原生 HLS
           video.src = url;
           video.addEventListener('canplay', stopLoading, { once:true });
           video.addEventListener('loadeddata', stopLoading, { once:true }); // 有的移动端只发这个
-          video.addEventListener('error', function(){
-            hide(loadingOverlay);
-            setPill('播放失败', 'bad');
-          });
+          video.addEventListener('error', failPlay);
           playIt();
         }
-        // 兑底：8 秒还没起播条件就亮播放键，让用户自己点
+        // 兑底：8 秒还没起播条件就亮播放键（纯音频只收遮罩，不弹大按钮），让用户自己点
         setTimeout(function(){
           if (video.readyState < 2 && !video.error
               && !loadingOverlay.classList.contains('hidden')){
             hide(loadingOverlay);
-            show(playOverlay);
+            if (!isAudio) show(playOverlay);
           }
         }, 8000);
       }

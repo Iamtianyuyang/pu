@@ -12,6 +12,9 @@ public sealed class FolderJob
     public required string Title { get; init; }
     public required IReadOnlyList<FolderFile> Files { get; init; }
 
+    /// <summary>扫描因达到文件数上限被截断：页面据此提示「仅显示前 500 个」。</summary>
+    public bool Truncated { get; init; }
+
     public string? OpenedToken(int index) => _opened.TryGetValue(index, out var t) ? t : null;
     public void MarkOpened(int index, string token) => _opened[index] = token;
 }

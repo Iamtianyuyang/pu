@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Pu.Core.Common;
 using Pu.Core.Serving;
 using QRCoder;
 
@@ -34,11 +35,13 @@ public sealed partial class MainWindow : Window, IDisposable
     // 多按钮反馈：每个按钮记住自己的原始文本，超时后逐个还原（原来只记一个，
     // 1.6s 内连点两个按钮时第一个会永久卡在“✓ 已复制”）
     private readonly Dictionary<Button, string> _feedbackLabels = [];
-    private string _baseUrl = "http://localhost";
+    private string _baseUrl = "http://localhost"; // 兜底（无 provider 时）
+    private Func<string>? _baseUrlProvider;       // 每次取用实时解析：Wi-Fi 切换后新链接/二维码跟上新 IP
     private string _currentUrl = "";
     private string _lastQrUrl = ""; // 二维码只随 URL 变化重建（进度刷新不重新编码 PNG）
     private MediaJob? _job;
     private FolderJob? _folder;
+    private FolderJob? _renderedFolder; // 已渲染行数据的文件夹：同一文件夹再显示时原地刷新，不重建列表
     private bool _closeRequested;
     private bool _disposeRequested;
     private bool _allowClose;
@@ -106,18 +109,23 @@ public sealed partial class MainWindow : Window, IDisposable
         application.Run();
     }
 
-    public void SetBaseUrl(string baseUrl)
+    /// <summary>设置服务地址提供者（延迟到每次取用动态解析：Wi-Fi 切换 / DHCP 重分配后，
+    /// 新任务的链接与二维码自动跟上新 IP，不用重启）。</summary>
+    public void SetBaseUrl(Func<string> baseUrlProvider)
     {
-        if (string.IsNullOrWhiteSpace(baseUrl)) return;
+        if (baseUrlProvider is null) return;
         OnUi(() =>
         {
-            _baseUrl = baseUrl.TrimEnd('/');
+            _baseUrlProvider = baseUrlProvider;
             if (JobView.Visibility == Visibility.Visible && _job is not null)
                 ShowJob(_job);
             else if (FolderView.Visibility == Visibility.Visible && _folder is not null)
                 ShowFolder(_folder);
         });
     }
+
+    /// <summary>当前服务地址（实时解析，避免 URL 固定成启动时的旧 IP）。</summary>
+    private string CurrentBaseUrl => (_baseUrlProvider?.Invoke() ?? _baseUrl).TrimEnd('/');
 
     /// <summary>job 进度/状态事件入口：只更新「当前选中 job」自己的事件。
     /// 历史 job 的事件永久挂着（WireJob 不取消订阅），新任务显示后它们不得把窗口抢回去；
@@ -163,6 +171,7 @@ public sealed partial class MainWindow : Window, IDisposable
             if (folder is null)
             {
                 _folderRows.Clear();
+                _renderedFolder = null;
                 if (FolderView.Visibility == Visibility.Visible) ShowIdle();
                 return;
             }
@@ -258,7 +267,7 @@ public sealed partial class MainWindow : Window, IDisposable
         ErrorView.Visibility = Visibility.Collapsed;
         if (animate) AnimateIn(JobView);
 
-        _currentUrl = $"{_baseUrl}/s/{job.Token}";
+        _currentUrl = $"{CurrentBaseUrl}/s/{job.Token}";
         JobTitleText.Text = string.IsNullOrWhiteSpace(job.Title) ? Path.GetFileName(job.SourcePath) : job.Title;
         JobDescriptionText.Text = string.IsNullOrWhiteSpace(job.SourceDescription)
             ? Path.GetFileName(job.SourcePath)
@@ -323,41 +332,72 @@ public sealed partial class MainWindow : Window, IDisposable
         StopDotPulse();
         if (animate) AnimateIn(FolderView);
 
-        _currentUrl = $"{_baseUrl}/f/{folder.Token}";
+        _currentUrl = $"{CurrentBaseUrl}/f/{folder.Token}";
         FolderTitleText.Text = string.IsNullOrWhiteSpace(folder.Title)
             ? Path.GetFileName(folder.FolderPath.TrimEnd(Path.DirectorySeparatorChar))
             : folder.Title;
-        FolderCountText.Text = $"{folder.Files.Count} 个";
+        FolderCountText.Text = $"{folder.Files.Count}{(folder.Truncated ? "+" : "")} 个";
         FolderLinkTextBox.Text = _currentUrl;
-        FolderQrImage.Source = BuildQr(_currentUrl);
+        // 二维码编码 + 图片解码很贵：只在 URL 变化时做一次（与 ShowJob 的 _lastQrUrl 一致，
+        // 同一文件夹重复显示时避免重编码；/s/ 与 /f/ 的 token 随机，两视图 URL 不可能相等）
+        if (!string.Equals(_currentUrl, _lastQrUrl, StringComparison.Ordinal))
+        {
+            _lastQrUrl = _currentUrl;
+            FolderQrImage.Source = BuildQr(_currentUrl);
+        }
         FolderFeedbackText.Foreground = Muted;
         FolderFeedbackText.Text = folder.Files.Count == 0 ? "没有找到支持的媒体文件" : "选一个想看的文件";
 
+        SetWindowStatus("文件夹", Accent);
+        // 同一文件夹再次显示（返回列表）：原地刷新状态徽标，滚动位置与行对象原样保留
+        if (ReferenceEquals(_renderedFolder, folder) && _folderRows.Count > 0)
+        {
+            UpdateFolderRows(folder);
+            return;
+        }
+        _renderedFolder = folder;
         _folderRows.Clear();
         foreach (var file in folder.Files)
         {
-            var openedToken = folder.OpenedToken(file.Index);
-            var jobState = openedToken is { } token && JobStateLookup is { } lookup ? lookup(token) : null;
-            var (stateText, stateBrush) = jobState switch
-            {
-                JobState.Transcoding => ("转码中", Accent),
-                JobState.Serving => ("已打开", Success),
-                JobState.Failed => ("失败", Danger),
-                _ => (openedToken is null ? "打开" : "已打开", openedToken is null ? Muted : Success),
-            };
+            var (stateText, stateBrush) = RowStateFor(folder, file);
             _folderRows.Add(new FolderRow
             {
                 Index = file.Index,
                 DisplayIndex = (file.Index + 1).ToString("00"),
                 Name = file.Name,
-                SizeText = FormatSize(file.SizeBytes),
+                SizeText = HumanSize.Format(file.SizeBytes),
                 StateText = stateText,
                 StateBrush = stateBrush,
                 IsEnabled = true,
             });
         }
+    }
 
-        SetWindowStatus("文件夹", Accent);
+    /// <summary>行状态徽标（打开/转码中/已打开/失败）：重建与原地刷新共用。</summary>
+    private (string Text, Brush Brush) RowStateFor(FolderJob folder, FolderFile file)
+    {
+        var openedToken = folder.OpenedToken(file.Index);
+        var jobState = openedToken is { } token && JobStateLookup is { } lookup ? lookup(token) : null;
+        return jobState switch
+        {
+            JobState.Transcoding => ("转码中", Accent),
+            JobState.Serving => ("已打开", Success),
+            JobState.Failed => ("失败", Danger),
+            _ => (openedToken is null ? "打开" : "已打开", openedToken is null ? Muted : Success),
+        };
+    }
+
+    /// <summary>同一文件夹再次显示：按当前 job 状态原地刷新行徽标，不重建集合（保住滚动位置）。</summary>
+    private void UpdateFolderRows(FolderJob folder)
+    {
+        foreach (var row in _folderRows)
+        {
+            var file = folder.Files[row.Index];
+            var (stateText, stateBrush) = RowStateFor(folder, file);
+            row.StateText = stateText;
+            row.StateBrush = stateBrush;
+            row.IsEnabled = true;
+        }
     }
 
     /// <summary>处理失败视图（探测/扫描/转码启动失败）：窗口给出错误，应用保持运行等待下一个任务。</summary>
@@ -612,13 +652,6 @@ public sealed partial class MainWindow : Window, IDisposable
             return null;
         }
     }
-
-    private static string FormatSize(long bytes) => bytes switch
-    {
-        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
-        >= 1L << 20 => $"{bytes / (double)(1L << 20):F0} MB",
-        _ => $"{Math.Max(1, bytes / 1024)} KB",
-    };
 
     private static string Compact(string? text, int maxLength)
     {

@@ -42,7 +42,10 @@ public sealed record TranscodePlan(
     /// 封装格式（-f hls）由 Transcoder 统一追加（产物先写 .tmp，扩展名推断会失败）。</summary>
     public static readonly string[] HlsOutputArgs =
     ["-hls_time", "2", "-hls_playlist_type", "vod", "-hls_list_size", "0",
-     "-hls_flags", "independent_segments"];
+     "-hls_flags", "independent_segments",
+     // 长视频多音轨 copy 时 muxing queue 默认 128 包会溢出（“Too many packets buffered for output stream”），
+     // 1024 对 2s 分片 + 多轨是安全值；只影响缓冲不影响产物字节
+     "-max_muxing_queue_size", "1024"];
 
     /// <summary>
     /// 产物格式版本：改封装参数（如 movflags）时 +1，调用方把它编进缓存变体，
@@ -96,6 +99,7 @@ public sealed record TranscodePlan(
                 "-map", "0:a:0",
                 "-c:a", copyable ? "copy" : "aac",
                 "-movflags", "+faststart",
+                "-max_muxing_queue_size", "1024", // 长音频多轨 copy 防 muxing queue 溢出
             };
             return new TranscodePlan(PlanKind.Remux,
                 $"音频 {audio.Codec} 封装为 M4A（{(copyable ? "copy" : "转 AAC")}）",

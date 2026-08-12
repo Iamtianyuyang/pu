@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Pu.Core.Cache;
 using Pu.Core.Common;
 using Pu.Core.Serving;
 using Xunit;
@@ -161,7 +162,7 @@ public class ServingTests
     [InlineData("http://127.0.0.1:8000/s/abc", true, null)]
     [InlineData("http://[::1]:8000/s/abc", true, null)]
     [InlineData("http://192.168.55.77:8000/s/abc", true, "192.168.55.77")] // LanIp
-    [InlineData("https://localhost:8000/s/abc", true, null)]
+    [InlineData("https://localhost:8000/s/abc", false, null)]   // 服务只监听 http，https 连不上
     [InlineData("http://localhost:8000", true, null)]
     [InlineData("http://localhost:9000/s/abc", false, null)]       // 端口不符
     [InlineData("http://203.0.113.7:8000/s/abc", false, null)]     // TEST-NET-3 保留段，永不本机
@@ -335,6 +336,46 @@ public class ServingTests
             // 失败任务永不保护
             job.SetFailed("boom");
             Assert.DoesNotContain(entry, server.ProtectedEntryDirs());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CACHE_DIR", old);
+        }
+    }
+
+    [Fact]
+    public async Task 直出任务_字幕后补中的缓存条目_受LRU保护()
+    {
+        var cacheRoot = Path.Combine(TestEnv.NewTestDir(), "cache");
+        var old = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
+        Environment.SetEnvironmentVariable("PU_CACHE_DIR", cacheRoot);
+        try
+        {
+            await using var server = await SessionServer.StartAsync(preferredPort: 18926);
+            // 直出（ServeOriginal）：产物 = 源文件本身（不在缓存），字幕写入中央缓存 {源指纹}/subs
+            var src = Path.Combine(TestEnv.NewTestDir(), "movie.mp4");
+            File.WriteAllBytes(src, new byte[64]);
+            var job = new MediaJob
+            {
+                Token = "p2",
+                SourcePath = src,
+                Title = "m",
+                SourceDescription = "d",
+                ArtifactPath = src, // 直出：产物即源文件
+                ContentType = "video/mp4",
+                PlanExplanation = "e",
+            };
+            job.SetServing(); // 直出立即置可播，字幕仍在后台抽取 → SubtitlesPending = true
+            server.Register(job);
+
+            // 字幕还没抽完：源指纹对应的缓存条目（{root}/{key}，subs 写在这）必须受保护
+            var subsEntry = CacheKey.ArtifactDirFor(src);
+            Assert.True(job.SubtitlesPending);
+            Assert.Contains(subsEntry, server.ProtectedEntryDirs());
+
+            // 字幕定案后：不再保护（条目可被 LRU 淘汰）
+            job.SetSubtitles([]);
+            Assert.DoesNotContain(subsEntry, server.ProtectedEntryDirs());
         }
         finally
         {

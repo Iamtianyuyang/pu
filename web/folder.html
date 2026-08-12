@@ -118,6 +118,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
   <div class="skel"></div>
   <div class="skel"></div>
 </div>
+<div class="hint hidden" id="truncHint">文件太多了，这里只列了前 500 个</div>
+<div class="hint hidden" id="connHint">连接已断开，正在自动重试…</div>
 <script>
 (function(){
   var token = location.pathname.split('/')[2];
@@ -125,6 +127,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
   var list = document.getElementById('list');
   var title = document.getElementById('title');
   var count = document.getElementById('count');
+  var truncHint = document.getElementById('truncHint');
+  var connHint = document.getElementById('connHint');
   var STATE_TEXT = { new:'未打开', transcoding:'转码中', serving:'就绪', failed:'失败' };
   var lastKey = '';
 
@@ -145,7 +149,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
       count.textContent = '0 个文件';
       return;
     }
-    count.textContent = st.count + ' 个文件';
+    count.textContent = st.count + (st.truncated ? '+' : '') + ' 个文件';
+    truncHint.classList.toggle('hidden', !st.truncated);
     var key = st.files.map(function(f){ return f.index + ':' + f.state; }).join('|');
     if (key === lastKey) return; // 状态没变不重建 DOM
     lastKey = key;
@@ -183,8 +188,8 @@ h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-over
   function tick(){
     fetch('/f/' + token + '/status', { cache:'no-store' })
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(render)
-      .catch(function(){});
+      .then(function(d){ connHint.classList.add('hidden'); render(d); })
+      .catch(function(){ connHint.classList.remove('hidden'); });
   }
   tick();
   setInterval(tick, 2000);
