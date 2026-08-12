@@ -25,7 +25,7 @@ public sealed partial class AboutDialog : Window
     {
         try
         {
-            Process.Start(new ProcessStartInfo("https://github.com/Iamtianyuyang/pupu")
+            Process.Start(new ProcessStartInfo("https://github.com/Iamtianyuyang/pu")
             {
                 UseShellExecute = true,
             });

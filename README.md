@@ -11,11 +11,11 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/github/v/release/Iamtianyuyang/pupu?color=1e5aa8&label=版本" alt="版本">
-  <img src="https://img.shields.io/github/downloads/Iamtianyuyang/pupu/total?color=1e5aa8&label=下载量" alt="下载量">
+  <img src="https://img.shields.io/github/v/release/Iamtianyuyang/pu?color=1e5aa8&label=版本" alt="版本">
+  <img src="https://img.shields.io/github/downloads/Iamtianyuyang/pu/total?color=1e5aa8&label=下载量" alt="下载量">
   <img src="https://img.shields.io/badge/Windows-10+-0078D6?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/github/license/Iamtianyuyang/pupu?color=1e5aa8&label=许可证" alt="许可证">
-  <img src="https://img.shields.io/github/stars/Iamtianyuyang/pupu?color=f1c40f&label=Stars" alt="Stars">
+  <img src="https://img.shields.io/github/license/Iamtianyuyang/pu?color=1e5aa8&label=许可证" alt="许可证">
+  <img src="https://img.shields.io/github/stars/Iamtianyuyang/pu?color=f1c40f&label=Stars" alt="Stars">
 </p>
 
 <p>
