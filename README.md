@@ -56,13 +56,15 @@
 
 ## 🧁 三分钟上手
 
-<video src="assets/demo.mp4" controls width="720"></video>
+<a href="assets/demo.mp4">
+  <img src="assets/demo-preview.png" width="720" alt="完整流程演示：右键 → 扫码 → 开看" />
+</a>
 
-> 🎬 完整流程演示：右键 → 扫码 → 开看。预览器不显示视频的话，直接下载 [demo.mp4](assets/demo.mp4) 看。
+> 🎬 完整流程演示：右键 → 扫码 → 开看。点击上图播放 [demo.mp4](assets/demo.mp4)（GitHub 预览器可能不支持内嵌视频，下载到本地看最稳）。
 
 ### 1️⃣ 下载安装
 
-下载 **`pu-setup-full.exe`**（全自带版），双击，一路「下一步」即可。
+下载 **[`pu-setup-full.exe`](https://github.com/Iamtianyuyang/pu/releases/latest)**（全自带版），双击，一路「下一步」即可。
 
 > **全自带版**已经把 ffmpeg 打包在内，装完即用，无需额外配置。
 
