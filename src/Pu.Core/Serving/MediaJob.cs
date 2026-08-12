@@ -44,9 +44,13 @@ public sealed class MediaJob
 
     private string? _error;
     private IReadOnlyList<SubtitleFile> _subtitles = [];
+    private bool _subsDone;
 
     /// <summary>进度 / 状态变化通知（控制台进度条等）。</summary>
     public event Action<MediaJob>? Changed;
+
+    /// <summary>字幕是否仍在后台抽取（页面据此决定是否继续轮询字幕列表）。</summary>
+    public bool SubtitlesPending { get { lock (_gate) return !_subsDone; } }
 
     public void UpdateProgress(double fraction)
     {
@@ -54,9 +58,25 @@ public sealed class MediaJob
         Changed?.Invoke(this);
     }
 
+    /// <summary>视频可播（直出/复用命中：立即调用，不等字幕；字幕就绪后单独补发）。
+    /// 重置字幕未定案标记：带字幕的 SetServing(subs) 后再次调用等同“重新决定字幕”。</summary>
+    public void SetServing()
+    {
+        lock (_gate) { _state = JobState.Serving; _progress = 1; _subsDone = false; }
+        Changed?.Invoke(this);
+    }
+
+    /// <summary>一次性置可播 + 字幕就绪（全转码路径产物落位后、测试用）。</summary>
     public void SetServing(IReadOnlyList<SubtitleFile> subtitles)
     {
-        lock (_gate) { _state = JobState.Serving; _progress = 1; _subtitles = subtitles; }
+        lock (_gate) { _state = JobState.Serving; _progress = 1; _subtitles = subtitles; _subsDone = true; }
+        Changed?.Invoke(this);
+    }
+
+    /// <summary>字幕就绪后补发（空表 = 无字幕/抽取失败，只丢字幕不拖垮视频）。</summary>
+    public void SetSubtitles(IReadOnlyList<SubtitleFile> subtitles)
+    {
+        lock (_gate) { _subtitles = subtitles; _subsDone = true; }
         Changed?.Invoke(this);
     }
 

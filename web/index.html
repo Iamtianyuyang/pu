@@ -214,6 +214,8 @@ video{width:100%;height:100%;display:block;outline:none}
 
   var timer = null;
   var hlsStarted = false; // hls.js（MSE）路径不会给 video.src 赋值，需要单独标记防重复初始化
+  var lastSubKey = '';    // 字幕列表指纹：直出/复用命中时字幕后补，列表变化才重建 DOM
+  var selectedSub = -1;   // 用户当前选中的字幕：重建 DOM 后恢复（字幕后补时选择不能丢）
 
   function show(el){ el.classList.remove('hidden'); }
   function hide(el){ el.classList.add('hidden'); }
@@ -238,13 +240,11 @@ video{width:100%;height:100%;display:block;outline:none}
     } else if (st.state === 'serving'){
       setPill('就绪', 'ok');
       hide(qrCard); hide(progressCard); hide(errorCard); show(playerCard);
-      if (timer){ clearInterval(timer); timer = null; }
       if (!video.src && !hlsStarted){
         hlsStarted = true;
-        buildSubs(st.subtitles || []);
         var url = st.hls
-          ? '/s/' + token + '/hls/index.m3u8?v=' + 4
-          : '/s/' + token + '/media?v=' + 4;
+          ? '/s/' + token + '/hls/index.m3u8'
+          : '/s/' + token + '/media';
         var stopLoading = function(){ hide(loadingOverlay); };
         var playIt = function(){ video.play().catch(function(){ hide(loadingOverlay); show(playOverlay); }); };
         // HLS：Safari 原生播 m3u8；其它浏览器用 hls.js（MSE）
@@ -280,6 +280,13 @@ video{width:100%;height:100%;display:block;outline:none}
           }
         }, 8000);
       }
+      // 字幕可能比视频晚就绪（直出/复用命中：后台抽，抽完补发）：
+      // 列表变化才重建（幂等，含清旧 track）；字幕未定案前保持慢轮询，定案后停
+      var subKey = JSON.stringify(st.subtitles || []);
+      if (subKey !== lastSubKey){ lastSubKey = subKey; buildSubs(st.subtitles || []); }
+      if (st.subsPending){
+        if (timer === null) timer = setInterval(tick, 2000);
+      } else if (timer){ clearInterval(timer); timer = null; }
     } else {
       setPill('失败', 'bad');
       hide(qrCard); hide(progressCard); hide(playerCard); show(errorCard);
@@ -290,6 +297,8 @@ video{width:100%;height:100%;display:block;outline:none}
 
   function buildSubs(list){
     subsRow.innerHTML = '';
+    // 清掉旧 <track>：字幕后补时可能重建多次，不清会重复挂字幕
+    while (video.firstChild) video.removeChild(video.firstChild);
     list.forEach(function(s, i){
       var t = document.createElement('track');
       t.kind = 'subtitles';
@@ -304,9 +313,14 @@ video{width:100%;height:100%;display:block;outline:none}
       subsRow.appendChild(b);
     });
     subsRow.style.display = list.length ? '' : 'none';
+    // 恢复用户之前选中的字幕（字幕后补重建 DOM 时选择不丢失；
+    // 新列表里没有该项则取消选择）
+    if (selectedSub >= 0 && selectedSub < list.length) selectSub(selectedSub);
+    else selectedSub = -1;
   }
 
   function selectSub(i){
+    selectedSub = i;
     var tracks = video.textTracks;
     for (var j = 0; j < tracks.length; j++) tracks[j].mode = (j === i) ? 'showing' : 'disabled';
     Array.prototype.forEach.call(subsRow.children, function(b, j){ b.classList.toggle('on', j === i); });

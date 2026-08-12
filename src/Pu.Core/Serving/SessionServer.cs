@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Builder;
@@ -61,6 +62,8 @@ public sealed class SessionServer : IAsyncDisposable
     internal static TimeSpan TransferProtectWindow { get; set; } = TimeSpan.FromMinutes(2);
     // 服务生命周期令牌：独立于 HTTP 请求（客户端断开不连坐取消），仅随服务停止统一取消
     private readonly CancellationTokenSource _lifetime = new();
+    // 停止中标志：StopAsync 后拒绝新提交（StopAsync 的快照循环只等待已登记任务）
+    private volatile bool _stopping;
     private readonly WebApplication _app;
 
     /// <summary>服务生命周期令牌：传给后台任务（探测/转码/抽字幕），StopAsync 时统一取消。</summary>
@@ -96,8 +99,26 @@ public sealed class SessionServer : IAsyncDisposable
 
     public static async Task<SessionServer> StartAsync(int preferredPort = 8000, CancellationToken ct = default)
     {
-        var port = FindFreePort(preferredPort);
+        // 先探测后绑定的 TOCTOU：探测通过的端口在绑定瞬间仍可能被占
+        // （其它进程同时 bind）。逐个端口重试：绑定失败换下一个，最多 32 个。
+        Exception? lastError = null;
+        for (var port = preferredPort; port < preferredPort + 32; port++)
+        {
+            try
+            {
+                return await StartOnPortAsync(port, ct);
+            }
+            catch (IOException ex) { lastError = ex; }        // AddressAlreadyInUseException : IOException
+            catch (SocketException ex) { lastError = ex; }
+            if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+        }
+        throw new InvalidOperationException(
+            $"端口 {preferredPort}–{preferredPort + 31} 均不可用"
+            + (lastError is null ? "" : $"（最后错误: {lastError.Message}）"));
+    }
 
+    private static async Task<SessionServer> StartOnPortAsync(int port, CancellationToken ct)
+    {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseKestrel(o => o.Listen(IPAddress.Any, port));
@@ -220,7 +241,15 @@ public sealed class SessionServer : IAsyncDisposable
             return Results.Json(new OpenResultDto(server.UrlFor(job)), JobStatusJsonContext.Default.OpenResultDto);
         });
 
-        await app.StartAsync(ct);
+        try
+        {
+            await app.StartAsync(ct);
+        }
+        catch
+        {
+            await app.DisposeAsync(); // 绑定失败的 app 要释放，避免残留 socket/线程
+            throw;
+        }
         return server;
     }
 
@@ -228,6 +257,7 @@ public sealed class SessionServer : IAsyncDisposable
     /// 同一源文件（指纹一致且策略变体一致）重复/并发提交直接复用已有 job，不重复转码。</summary>
     public async Task<MediaJob> SubmitAsync(string sourcePath, CancellationToken ct = default)
     {
+        ThrowIfStopping();
         // 源文件指纹（路径|大小|mtime）作去重键：源被替换 → 指纹变 → 不误复用旧任务
         var key = CacheKey.For(sourcePath);
         if (await TryReuseExistingAsync(key) is { } live)
@@ -257,7 +287,10 @@ public sealed class SessionServer : IAsyncDisposable
     private async Task<MediaJob?> TryReuseExistingAsync(string key)
     {
         if (_bySource.TryGetValue(key, out var token)
-            && _jobs.TryGetValue(token, out var live) && live.State != JobState.Failed)
+            && _jobs.TryGetValue(token, out var live) && live.State != JobState.Failed
+            // 产物可能已被 LRU 淘汰 / 用户删除：文件没了就不能复用，
+            // 否则页面显示“就绪”但 /media 打不开（HLS 检查 index.m3u8 本身）
+            && File.Exists(live.ArtifactPath))
         {
             var policy = PuConfig.TranscodePolicy;
             // 只有 ForceGpu + 有视频的变体才依赖编码器目录（lazy，探测一次后缓存）；其余纯配置判定
@@ -272,6 +305,7 @@ public sealed class SessionServer : IAsyncDisposable
 
     private async Task<MediaJob> SubmitCoreAsync(string sourcePath, CancellationToken ct)
     {
+        ThrowIfStopping();
         var info = await MediaProbe.ProbeAsync(sourcePath, ct);
         var policy = PuConfig.TranscodePolicy;
         // 只有会走进全转码分支的文件才需要编码器目录（探测要跑 ffmpeg -encoders + 硬件实测）；
@@ -331,8 +365,7 @@ public sealed class SessionServer : IAsyncDisposable
 
         if (target is null)
         {
-            // 零处理 / 复用命中：字幕后台抽取（大文件多条字幕要完整读一遍源文件，
-            // 不阻塞提交——窗口立刻有内容，抽完自动置可播）。
+            // 零处理 / 复用命中：视频立即可播（不等字幕）——字幕后台抽取，就绪后补发。
             // 字幕按源文件身份隔离，防止同目录多集互相覆盖：
             //   直出           → 中央缓存 {key}\subs（不往源目录写垃圾）
             //   中央缓存命中   → {缓存key}\subs（key 含源指纹，天然隔离）
@@ -345,7 +378,8 @@ public sealed class SessionServer : IAsyncDisposable
                     : CacheManager.EntryDirFor(artifact) is { } entry
                         ? entry // 中央缓存命中：{缓存key}，与生产路径（target.WorkDir）一致
                         : artifactDir;
-            _ = Track(job.Token, ExtractSubsAndServeAsync(job, sourcePath, info, subsRoot, _lifetime.Token));
+            job.SetServing(); // 同步置可播：窗口/页面不再出现“直出却转码中”的假进度
+            _ = Track(job.Token, ExtractSubsAsync(job, sourcePath, info, subsRoot, _lifetime.Token));
         }
         else
         {
@@ -377,17 +411,25 @@ public sealed class SessionServer : IAsyncDisposable
     }
 
     /// <summary>需要 LRU 保护的中央缓存条目：转码中（.tmp 写入中）与最近窗口内有传输的条目。
-    /// 已就绪且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。</summary>
+    /// 已就绪且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。
+    /// 顺带清理 _lastTransfer 中超龄的书签（超出保护窗口的条目已无保护意义，防字典无限增长）。</summary>
     internal HashSet<string> ProtectedEntryDirs()
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow.Ticks;
+        var staleCutoff = now - TransferProtectWindow.Ticks * 2;
+        foreach (var kv in _lastTransfer)
+        {
+            if (kv.Value < staleCutoff) _lastTransfer.TryRemove(kv.Key, out _);
+        }
         foreach (var job in _jobs.Values)
         {
             if (job.State == JobState.Failed) continue;
             var recentlyPlayed = _lastTransfer.TryGetValue(job.Token, out var last)
                 && now - last <= TransferProtectWindow.Ticks;
-            if (job.State != JobState.Transcoding && !recentlyPlayed) continue;
+            // 转码中、字幕后补中（直出/复用命中：字幕还在往 {key}/subs 写）、窗口内有传输 → 保护。
+            // 已定案且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。
+            if (job.State != JobState.Transcoding && !job.SubtitlesPending && !recentlyPlayed) continue;
             if (CacheManager.EntryDirFor(job.ArtifactPath) is { } entry)
                 set.Add(entry);
         }
@@ -398,22 +440,17 @@ public sealed class SessionServer : IAsyncDisposable
     public JobState? JobStateFor(string token)
         => _jobs.TryGetValue(token, out var job) ? job.State : null;
 
-    /// <summary>直出/复用命中：后台抽字幕，完成后置可播（抽字幕失败只丢字幕，不拖垮视频）。</summary>
-    private async Task ExtractSubsAndServeAsync(
+    /// <summary>直出/复用命中：视频已在提交时置可播，这里只补字幕（失败只丢字幕）。</summary>
+    private async Task ExtractSubsAsync(
         MediaJob job, string sourcePath, MediaInfo info, string subsRoot, CancellationToken ct)
     {
         try
         {
-            var subs = await ExtractSubsSafeAsync(sourcePath, info, subsRoot, ct);
-            job.SetServing(subs);
+            job.SetSubtitles(await ExtractSubsSafeAsync(sourcePath, info, subsRoot, ct));
         }
         catch (OperationCanceledException)
         {
-            job.SetFailed("已取消");
-        }
-        catch (Exception ex)
-        {
-            job.SetFailed(ex.Message);
+            job.SetSubtitles([]); // 服务关闭：字幕放弃，已就绪的视频不受影响
         }
         // 从登记表移除统一由 Track 的完成续延负责（见 Track）
     }
@@ -421,6 +458,7 @@ public sealed class SessionServer : IAsyncDisposable
     /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
     public async Task<FolderJob> SubmitFolderAsync(string folderPath, CancellationToken ct = default)
     {
+        ThrowIfStopping();
         var files = await Task.Run(() => FolderScan.Scan(folderPath, MediaExtensions.Defaults), ct);
         if (files.Count == 0)
             throw new InvalidOperationException("文件夹里没有媒体文件");
@@ -440,6 +478,7 @@ public sealed class SessionServer : IAsyncDisposable
     /// 指纹/策略变体的复用核对统一交给 SubmitAsync，这里只做并发在途去重。</summary>
     public async Task<MediaJob> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
     {
+        ThrowIfStopping();
         // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次。
         // 同 SubmitAsync：Lazy 包工厂，落选的并发提交不会启动多余探测
         var key = $"{folder.Token}:{index}";
@@ -457,6 +496,7 @@ public sealed class SessionServer : IAsyncDisposable
 
     private async Task<MediaJob> OpenFolderFileCoreAsync(FolderJob folder, int index, CancellationToken ct)
     {
+        ThrowIfStopping();
         var file = folder.Files.FirstOrDefault(f => f.Index == index)
             ?? throw new InvalidOperationException($"文件不存在: {index}");
         var job = await SubmitAsync(file.Path, ct);
@@ -481,6 +521,8 @@ public sealed class SessionServer : IAsyncDisposable
         MediaJob job, string sourcePath, MediaInfo info, TranscodePlan plan,
         ArtifactTarget target, string? variant, CancellationToken ct)
     {
+        // 声明在 try 外：转码失败时 catch 里要能引用它收尾（防悬空任务）
+        var subs = ExtractSubsSafeAsync(sourcePath, info, SubsRootFor(target, sourcePath), ct);
         try
         {
             Directory.CreateDirectory(target.WorkDir);
@@ -499,8 +541,8 @@ public sealed class SessionServer : IAsyncDisposable
             var transcode = Transcoder.TranscodeAsync(sourcePath, plan, outputPath, info.DurationUs, progress, ct);
             // 字幕抽取失败不连坐视频：视频照常可播，只是没有字幕。
             // 字幕目录按源文件指纹隔离（.pu/{指纹} 或中央 {key}），同目录多集互不覆盖
-            var subs = ExtractSubsSafeAsync(sourcePath, info, SubsRootFor(target, sourcePath), ct);
-            await Task.WhenAll(transcode, subs);
+            // 转码与抽字幕并行；视频就绪即播，字幕就绪后补发（不互相等）
+            await transcode;
             if (plan.Hls)
             {
                 var finalDir = Path.GetDirectoryName(target.ArtifactPath)!;
@@ -520,19 +562,23 @@ public sealed class SessionServer : IAsyncDisposable
             {
                 CacheManager.Touch(target.WorkDir); // 中央缓存新产物：更新 LRU 标记
             }
-            job.SetServing(await subs);
+            job.SetServing(); // 产物落位即播；字幕随后补发
+            try { job.SetSubtitles(await subs); }
+            catch (OperationCanceledException) { job.SetSubtitles([]); } // 关闭中：字幕放弃，已就绪的视频不受影响
         }
         catch (OperationCanceledException)
         {
             // 服务关闭取消：清掉半截临时产物，不让 ffmpeg 残留继续占缓存
             TryCleanTemp(plan, target);
             job.SetFailed("已取消");
+            await AbandonSubsAsync(subs); // 同一取消令牌下的字幕任务必然已中止，吞掉即可
         }
         catch (Exception ex)
         {
             // 转码成功但落位失败（如旧产物被播放器占用）等：清掉临时产物，防残留
             TryCleanTemp(plan, target);
             job.SetFailed(ex.Message);
+            await AbandonSubsAsync(subs); // 转码失败后字幕不再有用：等它收尾（可能仍在抽），防悬空
         }
         finally
         {
@@ -547,6 +593,13 @@ public sealed class SessionServer : IAsyncDisposable
         => target.Sidecar
             ? Path.Combine(target.WorkDir, CacheKey.For(sourcePath))
             : target.WorkDir;
+
+    /// <summary>转码失败后的并行字幕任务收尾：等它结束（用同一取消令牌，服务关闭时立即退），
+    /// 不让它成为无人等待的悬空任务。</summary>
+    private static async Task AbandonSubsAsync(Task subs)
+    {
+        try { await subs; } catch { /* 抽取失败/取消都随转码失败一起丢弃 */ }
+    }
 
     /// <summary>尽力清理临时产物：HLS 删临时整目录，其余删 .tmp 文件。</summary>
     private static void TryCleanTemp(TranscodePlan plan, ArtifactTarget target)
@@ -592,7 +645,7 @@ public sealed class SessionServer : IAsyncDisposable
             string.IsNullOrEmpty(s.Title) && LangNames.TryGetValue(s.Language, out var n) ? n : s.Title)).ToList();
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
-            job.Title, job.PlanExplanation, subs, job.IsHls);
+            job.Title, job.PlanExplanation, subs, job.IsHls, job.SubtitlesPending);
     }
 
     private FolderStatusDto ToFolderDto(FolderJob folder)
@@ -620,14 +673,53 @@ public sealed class SessionServer : IAsyncDisposable
             : $"音频 {info.Audio?.Codec ?? "无"} / {size}";
     }
 
-    private static bool IsOwnUrl(string? u, int port, string? lanIp)
+    /// <summary>只允许给本服务自己的 URL 出码：防止拿 token 生成指向钓鱼站的二维码。
+    /// 放行：localhost/回环、LanIp、本机所有 IPv4 地址、本机主机名——
+    /// 用户通过机器名（http://DESKTOP-XXX:8000/…）打开状态页时二维码不能是空白。</summary>
+    internal static bool IsOwnUrl(string? u, int port, string? lanIp)
     {
         if (string.IsNullOrEmpty(u) || u.Length > 512) return false;
         if (!Uri.TryCreate(u, UriKind.Absolute, out var uri)) return false;
         if (uri.Scheme is not ("http" or "https")) return false;
         if (uri.Port != port) return false;
-        return uri.Host is "localhost" or "127.0.0.1" or "::1"
+        return uri.IsLoopback
+            || LocalHosts.Value.Contains(uri.Host)
             || (lanIp is not null && string.Equals(uri.Host, lanIp, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>本机身份缓存：回环 + 机器名/主机名 + 全部本机 IPv4（测试与日常直连均放行）。</summary>
+    private static readonly Lazy<HashSet<string>> LocalHosts = new(() =>
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "localhost", "127.0.0.1", "::1",
+        };
+        try { set.Add(Environment.MachineName); set.Add(Dns.GetHostName()); } catch { }
+        try
+        {
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                try
+                {
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily == AddressFamily.InterNetwork)
+                            set.Add(ua.Address.ToString());
+                    }
+                }
+                catch { /* 单接口失败不影响其余 */ }
+            }
+        }
+        catch { }
+        return set;
+    });
+
+    /// <summary>停止中的服务拒绝新提交：提交在 StopAsync 的等待循环之外开始（快照窗口），
+    /// 启动的 ffmpeg 只能靠已取消的令牌自救；直接拒绝更干净。</summary>
+    private void ThrowIfStopping()
+    {
+        if (_stopping || _lifetime.IsCancellationRequested)
+            throw new OperationCanceledException(_lifetime.Token);
     }
 
     private static byte[] QrPng(string url)
@@ -638,27 +730,13 @@ public sealed class SessionServer : IAsyncDisposable
         return qr.GetGraphic(6);
     }
 
-    private static int FindFreePort(int preferred)
-    {
-        for (var port = preferred; port < preferred + 32; port++)
-        {
-            try
-            {
-                var listener = new TcpListener(IPAddress.Any, port);
-                listener.Start();
-                listener.Stop();
-                return port;
-            }
-            catch (SocketException) { }
-        }
-        throw new InvalidOperationException($"端口 {preferred}–{preferred + 31} 均被占用");
-    }
-
-    /// <summary>停止服务：先取消生命周期令牌（ffmpeg 转码/抽字幕随之终止），
+    /// <summary>停止服务：先置停止标志（拒绝新提交，堵住快照循环与 break 之间的登记窗口），
+    /// 再取消生命周期令牌（ffmpeg 转码/抽字幕随之终止），
     /// 等待全部后台任务退出后再停 Kestrel——关闭时不留继续写缓存的 ffmpeg 进程。
     /// 幂等：重复调用（含 DisposeAsync 的隐式调用）安全。</summary>
     public async Task StopAsync()
     {
+        _stopping = true;
         try { _lifetime.Cancel(); } catch (ObjectDisposedException) { } // 已 Dispose 过：取消无意义，继续等待
         // 循环取快照：取消时刻仍有提交在途时，新登记的后台任务可能落在第一轮快照之后；
         // 所有后台任务都以生命周期令牌为取消源，取消后必然快速退出，循环必然收敛。

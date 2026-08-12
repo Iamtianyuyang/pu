@@ -117,7 +117,7 @@ public static class Transcoder
                 fraction,
                 TimeSpan.FromMicroseconds(us),
                 TimeSpan.FromMicroseconds(totalDurationUs)));
-        }, cancellationToken: ct);
+        }, cancellationToken: ct, maxStdoutLines: 0, maxStderrLines: 200);
     }
 
     /// <summary>产物类型 → ffmpeg 封装器名（HLS 显式 hls；m4a 也走 mp4 封装器）。</summary>

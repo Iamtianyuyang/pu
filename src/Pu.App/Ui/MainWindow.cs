@@ -31,13 +31,14 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private readonly ObservableCollection<FolderRow> _folderRows = [];
     private readonly DispatcherTimer _feedbackTimer;
+    // 多按钮反馈：每个按钮记住自己的原始文本，超时后逐个还原（原来只记一个，
+    // 1.6s 内连点两个按钮时第一个会永久卡在“✓ 已复制”）
+    private readonly Dictionary<Button, string> _feedbackLabels = [];
     private string _baseUrl = "http://localhost";
     private string _currentUrl = "";
     private string _lastQrUrl = ""; // 二维码只随 URL 变化重建（进度刷新不重新编码 PNG）
     private MediaJob? _job;
     private FolderJob? _folder;
-    private Button? _feedbackButton;
-    private string? _feedbackButtonLabel;
     private bool _closeRequested;
     private bool _disposeRequested;
     private bool _allowClose;
@@ -551,8 +552,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ShowActionFeedback(Button button, string label)
     {
         ResetActionFeedback();
-        _feedbackButton = button;
-        _feedbackButtonLabel = button.Content?.ToString();
+        _feedbackLabels[button] = button.Content?.ToString() ?? "";
         button.Content = label;
         _feedbackTimer.Start();
     }
@@ -560,10 +560,9 @@ public sealed partial class MainWindow : Window, IDisposable
     private void ResetActionFeedback()
     {
         _feedbackTimer.Stop();
-        if (_feedbackButton is not null && _feedbackButtonLabel is not null)
-            _feedbackButton.Content = _feedbackButtonLabel;
-        _feedbackButton = null;
-        _feedbackButtonLabel = null;
+        foreach (var (button, original) in _feedbackLabels)
+            button.Content = original;
+        _feedbackLabels.Clear();
     }
 
     private void OnUi(Action action)

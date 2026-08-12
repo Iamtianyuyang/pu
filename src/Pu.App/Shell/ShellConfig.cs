@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Pu.Core;
+using Pu.Core.Common;
 
 namespace Pu.App.Shell;
 
@@ -11,8 +12,8 @@ public static class ShellConfig
 {
     private static readonly string[] DefaultExtensions = MediaExtensions.Defaults;
 
-    private static string ConfigPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu", "extensions.json");
+    // 与 PuConfig 共用 FfmpegLocator.ConfigDir：PU_CONFIG_DIR 测试钩子两边一致
+    private static string ConfigPath => Path.Combine(FfmpegLocator.ConfigDir, "extensions.json");
 
     public static IReadOnlyList<string> Load()
     {

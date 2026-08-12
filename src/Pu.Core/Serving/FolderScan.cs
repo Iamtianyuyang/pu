@@ -26,13 +26,15 @@ public static class FolderScan
         List<string>? subdirs = null;
         try
         {
-            // 跳过隐藏/系统目录（沿用默认行为）＋ reparse point（junction/symlink 可指向父目录形成循环）
+            // 跳过隐藏/系统目录（沿用默认行为）＋ reparse point（junction/symlink 可指向父目录形成循环；
+            // OneDrive/坚果云“仅联机”占位文件也是 reparse point——不跳过会被扫进列表，
+            // 点开时 ffprobe 触发按需下载，卡住或失败）
             var options = new EnumerationOptions
             {
                 AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint,
             };
             foreach (var d in Directory.EnumerateDirectories(dir, "*", options)) (subdirs ??= []).Add(d);
-            foreach (var f in Directory.EnumerateFiles(dir))
+            foreach (var f in Directory.EnumerateFiles(dir, "*", options))
             {
                 if (found.Count >= maxFiles) return;
                 if (extSet.Contains(Path.GetExtension(f)))

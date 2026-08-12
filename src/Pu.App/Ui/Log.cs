@@ -31,10 +31,28 @@ public static class Log
             lock (Gate)
             {
                 EnsureDir();
+                RotateIfNeeded();
                 File.AppendAllText(FilePath, line + "\r\n");
             }
         }
         catch { /* 日志失败不影响主流程 */ }
+    }
+
+    /// <summary>日志轮转：超过 1MB 把当前文件改名 .1（旧的覆盖），防止托盘常驻几个月日志无限膨胀。</summary>
+    private static void RotateIfNeeded()
+    {
+        const long MaxBytes = 1L << 20;
+        try
+        {
+            var fi = new FileInfo(FilePath);
+            if (fi.Exists && fi.Length > MaxBytes)
+            {
+                var old = FilePath + ".1";
+                if (File.Exists(old)) File.Delete(old);
+                File.Move(FilePath, old);
+            }
+        }
+        catch { /* 轮转失败不阻塞写日志 */ }
     }
 
     /// <summary>确保 %LOCALAPPDATA%\Pu 存在：便携版全新机器上该目录可能从未创建，

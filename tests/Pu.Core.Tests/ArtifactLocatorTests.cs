@@ -384,6 +384,45 @@ public class ArtifactLocatorTests
         Assert.False(char.IsHighSurrogate(stem2[^1]), "完整代理对被误截");
     }
 
+    [Fact]
+    public void SafeStem_超长名截断到安全预算_短名原样()
+    {
+        Assert.Equal("movie.mkv", ArtifactLocator.SafeStem("movie.mkv"));
+        var longName = new string('a', 500);
+        var stem = ArtifactLocator.SafeStem(longName);
+        Assert.Equal(140, stem.Length);
+    }
+
+    [Fact]
+    public void SafeStem_代理对卡在边界时回退一个码元()
+    {
+        // 139 个 'a' + emoji（代理对占 140/141 两个码元，cut 到 140 会把低代理截掉）
+        var stem = ArtifactLocator.SafeStem(new string('a', 139) + char.ConvertFromUtf32(0x1F389));
+        Assert.Equal(139, stem.Length);
+        Assert.False(char.IsHighSurrogate(stem[^1]), "孤立高代理泄漏到显示名");
+        Assert.False(char.IsLowSurrogate(stem[^1]), "孤立低代理泄漏到显示名");
+    }
+
+    [Fact]
+    public void SafeStem_截断后修剪尾部点与空格()
+    {
+        // 137 'a' + 4 个点 = 141 > 140 → cut 后尾部是 "..."，修剪回 137
+        var stem = ArtifactLocator.SafeStem(new string('a', 137) + "....");
+        Assert.Equal(137, stem.Length);
+        Assert.All(stem, c => Assert.Equal('a', c));
+        // 尾部点+空格混合：cut 边界落在 "..  " 上，修剪回 136 个 'a'
+        var stem2 = ArtifactLocator.SafeStem(new string('a', 136) + "..  " + new string('b', 3));
+        Assert.Equal(136, stem2.Length);
+        Assert.All(stem2, c => Assert.Equal('a', c));
+    }
+
+    [Fact]
+    public void SafeStem_纯点纯空格名兑底为media()
+    {
+        Assert.Equal("media", ArtifactLocator.SafeStem(new string('.', 200)));
+        Assert.Equal("media", ArtifactLocator.SafeStem(new string(' ', 200)));
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = TestEnv.NewTestDir();

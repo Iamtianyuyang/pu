@@ -5,7 +5,9 @@ public static class ContentTypes
     public static string ForMedia(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
     {
         ".mp4" or ".m4v" => "video/mp4",
-        ".mov" => "video/quicktime",
+        // QuickTime 容器结构即 ISO BMFF：video/quicktime 在 Chrome/Android 不可靠。
+        // 直出矩阵限 h264 + mp4 家族（含 mov），按 video/mp4 声明让 Chromium 正常嗅探播放。
+        ".mov" => "video/mp4",
         ".webm" => "video/webm",
         ".mkv" => "video/x-matroska",
         ".ts" or ".mts" or ".m2ts" => "video/mp2t",

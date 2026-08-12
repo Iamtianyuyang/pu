@@ -109,7 +109,8 @@ public static class ArtifactLocator
         catch { /* 清单写失败只是下次重转 */ }
     }
 
-    /// <summary>登记就地产物路径，供 pu --clean 统一清除。</summary>
+    /// <summary>登记就地产物路径，供 pu --clean 统一清除。
+    /// 登记前去重：同路径只写一行，避免长期使用后 sidecars.log 膨胀、--clean 重复删。</summary>
     public static void Register(string artifactPath)
     {
         try
@@ -117,7 +118,13 @@ public static class ArtifactLocator
             lock (RegistryLock)
             {
                 Directory.CreateDirectory(FfmpegLocator.ConfigDir);
-                File.AppendAllText(RegistryPath, artifactPath + Environment.NewLine);
+                var known = File.Exists(RegistryPath)
+                    ? File.ReadAllLines(RegistryPath)
+                        .Select(l => l.Trim()).Where(l => l.Length > 0)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (known.Add(artifactPath))
+                    File.AppendAllText(RegistryPath, artifactPath + Environment.NewLine);
             }
         }
         catch { }
@@ -208,7 +215,7 @@ public static class ArtifactLocator
     /// 单路径组件上限（255），创建 .tmp 文件或 HLS 目录时直接失败。
     /// 截断到安全预算并保留可读前缀；避免从代理对中间截断（emoji 等补充平面字符）；
     /// 去掉截断后可能出现的尾部点/空格（Windows 会静默修剪它们，两个名字会撞到同一个组件）。</summary>
-    private static string SafeStem(string stem)
+    internal static string SafeStem(string stem)
     {
         const int maxStem = 140; // 140 + '.' + 40 位键 + ".mp4.hls"(8) + ".tmp"(4) ≈ 194 < 255
         if (stem.Length <= maxStem) return stem;

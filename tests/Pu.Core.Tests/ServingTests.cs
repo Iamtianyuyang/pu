@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Pu.Core.Common;
 using Pu.Core.Serving;
 using Xunit;
 
@@ -131,6 +132,51 @@ public class ServingTests
         var html = await resp.Content.ReadAsStringAsync();
         Assert.Contains("噗~噗噗~~噗噗噗噗~~~~", html);
         Assert.Contains("<video", html);
+    }
+
+    [Fact]
+    public async Task 状态JSON_字幕后补流程_SubsPending翻转()
+    {
+        using var dir = new TempDir();
+        var job = ServingJob(dir.Path, "e2");
+        await using var server = await SessionServer.StartAsync(preferredPort: 18913);
+        job.SetServing(); // 视频先可播、字幕未定案（直出/复用命中的实际路径）
+        server.Register(job);
+
+        using var client = new HttpClient();
+        async Task<bool> SubsPending()
+        {
+            var resp = await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/status");
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            return doc.RootElement.GetProperty("subsPending").GetBoolean();
+        }
+
+        Assert.True(await SubsPending()); // 未定案：页面继续慢轮询字幕
+        job.SetSubtitles([new SubtitleFile(2, "subrip", "chi", "", "2.vtt")]);
+        Assert.False(await SubsPending()); // 定案（空表也算）：页面停止轮询
+    }
+
+    [Theory]
+    [InlineData("http://localhost:8000/s/abc", true, null)]
+    [InlineData("http://127.0.0.1:8000/s/abc", true, null)]
+    [InlineData("http://[::1]:8000/s/abc", true, null)]
+    [InlineData("http://192.168.55.77:8000/s/abc", true, "192.168.55.77")] // LanIp
+    [InlineData("https://localhost:8000/s/abc", true, null)]
+    [InlineData("http://localhost:8000", true, null)]
+    [InlineData("http://localhost:9000/s/abc", false, null)]       // 端口不符
+    [InlineData("http://203.0.113.7:8000/s/abc", false, null)]     // TEST-NET-3 保留段，永不本机
+    [InlineData("http://evil.example.com:8000/s/abc", false, null)]
+    [InlineData("javascript:alert(1)", false, null)]               // 非 http(s)
+    [InlineData("not a url", false, null)]
+    public void 二维码URL白名单_只放行本机服务(string url, bool allowed, string? lanIp)
+        => Assert.Equal(allowed, SessionServer.IsOwnUrl(url, 8000, lanIp));
+
+    [Fact]
+    public void 二维码URL白名单_本机主机名放行()
+    {
+        // 用户通过机器名打开状态页时二维码不能是空白
+        Assert.True(SessionServer.IsOwnUrl($"http://{Environment.MachineName}:8000/s/abc", 8000, null));
+        Assert.True(SessionServer.IsOwnUrl($"http://{Dns.GetHostName()}:8000/s/abc", 8000, null));
     }
 
     [Fact]
@@ -350,6 +396,115 @@ public class ServingTests
         {
             blocker.Stop();
         }
+    }
+
+    [Fact]
+    public async Task 字幕后补期间条目受LRU保护_定案后放行()
+    {
+        var cacheRoot = Path.Combine(TestEnv.NewTestDir(), "cache");
+        var old = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
+        Environment.SetEnvironmentVariable("PU_CACHE_DIR", cacheRoot);
+        try
+        {
+            await using var server = await SessionServer.StartAsync(preferredPort: 18914);
+            var entry = Path.Combine(cacheRoot, "deadbeef");
+            var job = new MediaJob
+            {
+                Token = "p2",
+                SourcePath = "y.mp4",
+                Title = "y",
+                SourceDescription = "d",
+                ArtifactPath = Path.Combine(entry, "out.mp4.hls", "index.m3u8"),
+                ContentType = "video/mp4",
+                PlanExplanation = "e",
+                IsHls = true,
+            };
+            job.SetServing(); // 直出/复用命中：视频已可播，但字幕还在后台抽
+            server.Register(job);
+
+            // 字幕未定案：{key} 条目（subs 正在往里写）必须受保护，不能被 LRU 删
+            Assert.True(job.SubtitlesPending);
+            Assert.Contains(entry, server.ProtectedEntryDirs());
+
+            // 字幕定案（空表也算）→ 放行给 LRU
+            job.SetSubtitles([]);
+            Assert.False(job.SubtitlesPending);
+            Assert.DoesNotContain(entry, server.ProtectedEntryDirs());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CACHE_DIR", old);
+        }
+    }
+
+    [Fact]
+    public async Task 复用命中_产物被删后重新生产_不误复用()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        // 隔离中央缓存：防测试触发淘汰删到真实缓存
+        var cacheRoot = Path.Combine(TestEnv.NewTestDir(), "cache");
+        var old = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
+        Environment.SetEnvironmentVariable("PU_CACHE_DIR", cacheRoot);
+        try
+        {
+            using var dir = new TempDir();
+            // 无 faststart → Remux 分支 → 会产出真实产物文件
+            var src = await MakeVideo(dir.Path, "src.mp4",
+                ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
+
+            await using var server = await SessionServer.StartAsync(preferredPort: 18915);
+
+            var first = await server.SubmitAsync(src);
+            await WaitServingAsync(first, TimeSpan.FromSeconds(60));
+            Assert.Equal(JobState.Serving, first.State);
+            Assert.True(File.Exists(first.ArtifactPath), "产物应已落位");
+
+            // 模拟产物被 LRU 淘汰 / 用户删除（连带复用清单）
+            File.Delete(first.ArtifactPath);
+            try { File.Delete(first.ArtifactPath + ".json"); } catch { }
+
+            // 同源再提交：内存里旧 job 还在，但产物没了 → 必须重新生产而不是复用
+            var second = await server.SubmitAsync(src);
+            Assert.NotEqual(first.Token, second.Token);
+            await WaitServingAsync(second, TimeSpan.FromSeconds(60));
+            Assert.True(File.Exists(second.ArtifactPath), "应重新生产产物");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CACHE_DIR", old);
+        }
+    }
+
+    private static async Task WaitServingAsync(MediaJob job, TimeSpan timeout)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<MediaJob> handler = _ => { if (job.State == JobState.Serving) tcs.TrySetResult(); };
+        job.Changed += handler;
+        try
+        {
+            if (job.State == JobState.Serving) return;
+            await tcs.Task.WaitAsync(timeout);
+        }
+        finally
+        {
+            job.Changed -= handler;
+        }
+    }
+
+    private static async Task<string> MakeVideo(string dir, string name, string[] codecArgs)
+    {
+        var path = Path.Combine(dir, name);
+        var args = new List<string>
+        {
+            "-y", "-v", "error",
+            "-f", "lavfi", "-i", "testsrc=duration=1:size=128x72:rate=10",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        };
+        args.AddRange(codecArgs);
+        args.Add(path);
+        var r = await ProcessRunner.RunAsync("ffmpeg", args);
+        Assert.True(r.ExitCode == 0, $"ffmpeg 生成样本失败: {r.StdErr}");
+        return path;
     }
 
     private sealed class TempDir : IDisposable
