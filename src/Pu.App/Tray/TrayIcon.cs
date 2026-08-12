@@ -17,7 +17,7 @@ public sealed class TrayIcon : IDisposable
     private const uint WM_APP = 0x8000;
     private const uint WM_QUIT = 0x0012;
     private const uint WM_CONTEXTMENU = 0x007B;
-    private const uint NIN_SELECT = 0x0400 + 0x0400;
+    private const uint NIN_SELECT = 0x0400; // WM_USER + 0（Explorer 只发这个值，0x0800 永远收不到）
     private const uint TPM_RIGHTBUTTON = 0x0002, TPM_RETURNCMD = 0x0100, TPM_NONOTIFY = 0x0080;
     private const uint MF_STRING = 0x0000, MF_SEPARATOR = 0x0800;
     private const uint IMAGE_ICON = 1, LR_LOADFROMFILE = 0x0010;

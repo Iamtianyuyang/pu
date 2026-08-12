@@ -25,17 +25,17 @@ public static class Transcoder
         if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0)
         {
             // 硬件解码失败（驱动/格式不支持）→ 清掉首轮残留分片/半截文件，纯软件解码重试一次
-            if (plan.Hls)
-            {
-                var dir = Path.GetDirectoryName(outputPath);
-                if (dir is not null)
-                {
-                    try { foreach (var f in Directory.EnumerateFiles(dir)) File.Delete(f); } catch { /* 尽力而为 */ }
-                }
-            }
-            else TryDelete(outputPath);
+            CleanupArtifact(outputPath, plan);
             result = await RunFfmpegAsync(input, [], plan.OutputArgs,
                 outputPath, plan, totalDurationUs, progress, ct);
+        }
+        if (result.ExitCode != 0 && plan.EncoderName is { } enc && enc != "libx264")
+        {
+            // 硬件编码器本身失败（驱动崩溃/分辨率超限）→ 清残片，libx264 软编兑底一次
+            CleanupArtifact(outputPath, plan);
+            var fallback = plan.WithSoftwareEncoder();
+            result = await RunFfmpegAsync(input, fallback.EffectiveInputArgs, fallback.OutputArgs,
+                outputPath, fallback, totalDurationUs, progress, ct);
         }
 
         if (result.ExitCode != 0)
@@ -47,6 +47,20 @@ public static class Transcoder
 
         progress?.Report(new TranscodeProgress(
             1, TimeSpan.FromMicroseconds(totalDurationUs), TimeSpan.FromMicroseconds(totalDurationUs)));
+    }
+
+    /// <summary>清掉本轮失败产出的分片/半截文件：HLS 清临时目录内全部文件，其余删目标文件。</summary>
+    private static void CleanupArtifact(string outputPath, TranscodePlan plan)
+    {
+        if (plan.Hls)
+        {
+            var dir = Path.GetDirectoryName(outputPath);
+            if (dir is not null)
+            {
+                try { foreach (var f in Directory.EnumerateFiles(dir)) File.Delete(f); } catch { /* 尽力而为 */ }
+            }
+        }
+        else TryDelete(outputPath);
     }
 
     private static async Task<ProcessResult> RunFfmpegAsync(

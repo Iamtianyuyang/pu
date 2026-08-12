@@ -43,9 +43,13 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool _allowClose;
     private bool _dotPulsing;
     private bool _firstShow = true;
+    private string? _busyPath; // 正在分析/扫描的路径：其它任务的进度事件不顶掉它的视图
 
     public event Action? CloseRequested;
     public event Action<int>? FolderFileClicked;
+
+    /// <summary>文件夹行状态查询（按 job token）：转码中/就绪/失败徽标（Program 注入）。</summary>
+    public Func<string, JobState?>? JobStateLookup { get; set; }
 
     private static readonly string[] QueenWords =
     ["全世界最可爱", "无敌漂亮", "闪闪发光", "人见人爱", "笑起来超甜", "元气满满", "聪明伶俐", "宇宙第一美少女"];
@@ -119,14 +123,21 @@ public sealed partial class MainWindow : Window, IDisposable
     {
         OnUi(() =>
         {
-            _job = job;
             if (job is null)
             {
+                _busyPath = null;
                 if (_folder is not null) ShowFolder(_folder);
                 else ShowIdle();
                 return;
             }
 
+            // 其它任务的进度事件不顶掉当前「正在分析」视图
+            // （提交 A 后立刻提交 B：A 的进度更新不该把 B 的 busy 视图挤走）
+            if (_busyPath is not null
+                && !string.Equals(job.SourcePath, _busyPath, StringComparison.OrdinalIgnoreCase))
+                return;
+            _busyPath = null;
+            _job = job;
             ShowJob(job);
         });
     }
@@ -147,6 +158,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 return;
             }
 
+            _busyPath = null;
             _job = null;
             ShowFolder(folder);
         });
@@ -199,6 +211,7 @@ public sealed partial class MainWindow : Window, IDisposable
         OnUi(() =>
         {
             _job = null;
+            _busyPath = path;
             BusyTitleText.Text = Directory.Exists(path)
                 ? Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar))
                 : Path.GetFileName(path);
@@ -316,15 +329,23 @@ public sealed partial class MainWindow : Window, IDisposable
         _folderRows.Clear();
         foreach (var file in folder.Files)
         {
-            var opened = folder.OpenedToken(file.Index) is not null;
+            var openedToken = folder.OpenedToken(file.Index);
+            var jobState = openedToken is { } token && JobStateLookup is { } lookup ? lookup(token) : null;
+            var (stateText, stateBrush) = jobState switch
+            {
+                JobState.Transcoding => ("转码中", Accent),
+                JobState.Serving => ("已打开", Success),
+                JobState.Failed => ("失败", Danger),
+                _ => (openedToken is null ? "打开" : "已打开", openedToken is null ? Muted : Success),
+            };
             _folderRows.Add(new FolderRow
             {
                 Index = file.Index,
                 DisplayIndex = (file.Index + 1).ToString("00"),
                 Name = file.Name,
                 SizeText = FormatSize(file.SizeBytes),
-                StateText = opened ? "已打开" : "打开",
-                StateBrush = opened ? Success : Muted,
+                StateText = stateText,
+                StateBrush = stateBrush,
                 IsEnabled = true,
             });
         }

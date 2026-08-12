@@ -32,12 +32,16 @@ public sealed record TranscodePlan(
 {
     public string[] EffectiveInputArgs => InputArgs ?? [];
 
+    /// <summary>全转码分支选用的编码器名（h264_nvenc 等）；硬编失败时 WithSoftwareEncoder 重建参数。直出/Remux 为 null。</summary>
+    public string? EncoderName { get; init; }
+
     /// <summary>HLS 产物（m3u8 + 分片目录）：Remux/全转码都走，浏览器拿到首分片即播。</summary>
     public bool Hls { get; init; }
 
-    /// <summary>HLS 产物：m3u8 引用同目录分片，RelativeSegments 占位由 Transcoder 展开。</summary>
+    /// <summary>HLS 产物：m3u8 引用同目录分片，RelativeSegments 占位由 Transcoder 展开。
+    /// 封装格式（-f hls）由 Transcoder 统一追加（产物先写 .tmp，扩展名推断会失败）。</summary>
     public static readonly string[] HlsOutputArgs =
-    ["-f", "hls", "-hls_time", "2", "-hls_playlist_type", "vod", "-hls_list_size", "0",
+    ["-hls_time", "2", "-hls_playlist_type", "vod", "-hls_list_size", "0",
      "-hls_flags", "independent_segments"];
 
     /// <summary>
@@ -164,7 +168,37 @@ public sealed record TranscodePlan(
         var explanation = forced
             ? $"强制转码 {video.Codec} → H.264（{how}）"
             : $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{how}）";
-        return new TranscodePlan(PlanKind.FullTranscode, explanation, full.ToArray(), "mp4.hls", inputArgs) { Hls = true };
+        return new TranscodePlan(PlanKind.FullTranscode, explanation, full.ToArray(), "mp4.hls", inputArgs)
+        {
+            Hls = true,
+            EncoderName = enc,
+        };
+    }
+
+    /// <summary>
+    /// 硬编失败兜底：把 OutputArgs 里的硬编块（-c:v {EncoderName} + 参数）替换为 libx264，
+    /// 去掉 -hwaccel 输入参数，返回新计划。软编/非全转码计划原样返回。
+    /// </summary>
+    public TranscodePlan WithSoftwareEncoder()
+    {
+        if (EncoderName is null || EncoderName == "libx264") return this;
+        var block = EncoderCatalog.ArgsFor(EncoderName);
+        var args = OutputArgs.ToList();
+        for (var i = 0; i + block.Length <= args.Count; i++)
+        {
+            if (args[i] != "-c:v" || !string.Equals(args[i + 1], EncoderName, StringComparison.Ordinal))
+                continue;
+            args.RemoveRange(i, block.Length);
+            args.InsertRange(i, EncoderCatalog.ArgsFor("libx264"));
+            return new TranscodePlan(PlanKind.FullTranscode,
+                $"{Explanation}（{EncoderName} 硬编失败 → libx264 软编兜底）",
+                args.ToArray(), OutputExtension, InputArgs: null)
+            {
+                Hls = Hls,
+                EncoderName = "libx264",
+            };
+        }
+        return this; // 找不到编码器块（理论上不可能）：原样返回
     }
 
     private static List<string> BuildMaps(MediaInfo info)

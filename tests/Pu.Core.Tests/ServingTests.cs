@@ -149,7 +149,8 @@ public class ServingTests
         Assert.Equal("serving", root.GetProperty("state").GetString());
         Assert.Equal(1.0, root.GetProperty("progress").GetDouble());
         Assert.Equal("sample", root.GetProperty("title").GetString());
-        Assert.Equal(job.SourcePath, root.GetProperty("source").GetString());
+        // 本地源路径不进状态 JSON（持 URL 的局域网访客不应看到宿主机文件路径）
+        Assert.False(root.TryGetProperty("source", out _));
     }
 
     [Fact]

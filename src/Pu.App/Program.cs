@@ -39,7 +39,16 @@ public static class Program
                 || args[0] is "--register" or "--unregister" or "--clean" or "--install" or "--uninstall" or "--help" or "-h" or "/?" or "help" or "--version";
             if (needConsole) AllocConsole();
             try { Console.OutputEncoding = Encoding.UTF8; } catch { }
-            return await RunCommandAsync(args);
+            try
+            {
+                return await RunCommandAsync(args);
+            }
+            catch (Exception ex)
+            {
+                // 命令模式也要有友好错误（如 --install 时已安装实例正在运行导致复制失败）
+                Console.Error.WriteLine($"错误: {ex.Message}");
+                return 1;
+            }
         }
 
         // ── 服务模式：pu <文件|文件夹> ──
@@ -215,6 +224,7 @@ public static class Program
         if (error is not null) throw error;
         if (instance is null) throw new InvalidOperationException("主窗口启动超时");
         instance.SetBaseUrl($"http://{server.LanIp ?? "localhost"}:{server.Port}");
+        instance.JobStateLookup = server.JobStateFor; // 文件夹行徽标：转码中/就绪/失败
         return instance;
     }
 

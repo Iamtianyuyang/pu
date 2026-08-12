@@ -13,16 +13,7 @@ public class FolderServingTests
     {
         if (!TestEnv.HasFfmpeg) return;
         using var dir = new TempDir();
-        var sample = Path.Combine(dir.Path, "sample.mp4");
-        var r = await Pu.Core.Common.ProcessRunner.RunAsync("ffmpeg", new[]
-        {
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "testsrc=duration=1:size=128x72:rate=10",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
-            sample,
-        });
-        Assert.True(r.ExitCode == 0, $"生成样本失败: {r.StdErr}");
+        var sample = CreateSampleMp4(dir.Path, "sample.mp4");
         File.WriteAllText(Path.Combine(dir.Path, "notes.txt"), "非媒体");
 
         await using var server = await SessionServer.StartAsync(preferredPort: 18920);
@@ -71,6 +62,48 @@ public class FolderServingTests
             $"http://localhost:{server.Port}/f/{folder.Token}/open/0", null);
         using var open2Doc = JsonDocument.Parse(await open2.Content.ReadAsStringAsync());
         Assert.Equal(mediaUrl, open2Doc.RootElement.GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task 同源文件重复提交_复用同一Job不重复转码()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var sample = CreateSampleMp4(dir.Path, "dedup.mp4");
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18923);
+
+        // 顺序重复提交 → 同一 job
+        var job1 = await server.SubmitAsync(sample);
+        var job2 = await server.SubmitAsync(sample);
+        Assert.Same(job1, job2);
+
+        // 并发提交 → 同一 job（探测/注册只跑一次）
+        var jobs = await Task.WhenAll(server.SubmitAsync(sample), server.SubmitAsync(sample));
+        Assert.Same(job1, jobs[0]);
+        Assert.Same(job1, jobs[1]);
+
+        // 失败后重新提交 → 允许重建（不复用失败 job）
+        job2.SetFailed("模拟失败");
+        var job3 = await server.SubmitAsync(sample);
+        Assert.NotSame(job1, job3);
+        Assert.Equal(JobState.Serving, job3.State);
+    }
+
+    /// <summary>生成 1s 的 H.264+AAC faststart MP4（128×72，直出路径）。</summary>
+    private static string CreateSampleMp4(string dir, string name)
+    {
+        var sample = Path.Combine(dir, name);
+        var r = Pu.Core.Common.ProcessRunner.RunAsync("ffmpeg", new[]
+        {
+            "-y", "-v", "error",
+            "-f", "lavfi", "-i", "testsrc=duration=1:size=128x72:rate=10",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
+            sample,
+        }).GetAwaiter().GetResult();
+        Assert.True(r.ExitCode == 0, $"生成样本失败: {r.StdErr}");
+        return sample;
     }
 
     [Fact]

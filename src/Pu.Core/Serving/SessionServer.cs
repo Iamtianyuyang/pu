@@ -45,6 +45,10 @@ public sealed class SessionServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
     // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次
     private readonly ConcurrentDictionary<string, Task<MediaJob>> _opening = new(StringComparer.Ordinal);
+    // 单文件模式同源去重：源路径 → job token（转码中/已就绪都复用，避免重复转码与产物互相覆盖）
+    private readonly ConcurrentDictionary<string, string> _bySource = new(StringComparer.OrdinalIgnoreCase);
+    // 同源提交的在途去重：并发提交同一文件只跑一次探测/注册
+    private readonly ConcurrentDictionary<string, Task<MediaJob>> _submitting = new(StringComparer.OrdinalIgnoreCase);
     private readonly WebApplication _app;
 
     /// <summary>请求级诊断日志（Pu.App 注入；不看 UA/Range 排查不了移动端播放问题）。</summary>
@@ -195,8 +199,33 @@ public sealed class SessionServer : IAsyncDisposable
         return server;
     }
 
-    /// <summary>提交一个媒体文件：探测 → 决策 → 注册 job，转码/抽字幕在后台并行跑。</summary>
+    /// <summary>提交一个媒体文件：探测 → 决策 → 注册 job，转码/抽字幕在后台并行跑。
+    /// 同一源文件重复/并发提交（转码中或已就绪）直接复用已有 job，不重复转码。</summary>
     public async Task<MediaJob> SubmitAsync(string sourcePath, CancellationToken ct = default)
+    {
+        var key = Path.GetFullPath(sourcePath);
+        // 同源去重：避免两个 ffmpeg 写同一个产物临时目录互相覆盖，
+        // 也避免重新生产时删除正在被播放的旧产物（Delete+Move 窗口期会让播放 404）
+        if (_bySource.TryGetValue(key, out var token)
+            && _jobs.TryGetValue(token, out var live) && live.State != JobState.Failed)
+        {
+            LatestUrl = UrlFor(live);
+            return live;
+        }
+
+        // 在途去重：先查后建的窗口期里并发提交同一文件 → 共享同一个任务
+        var task = _submitting.GetOrAdd(key, _ => SubmitCoreAsync(sourcePath, ct));
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            _submitting.TryRemove(KeyValuePair.Create(key, task));
+        }
+    }
+
+    private async Task<MediaJob> SubmitCoreAsync(string sourcePath, CancellationToken ct)
     {
         var info = await MediaProbe.ProbeAsync(sourcePath, ct);
         var policy = PuConfig.TranscodePolicy;
@@ -252,17 +281,18 @@ public sealed class SessionServer : IAsyncDisposable
             IsHls = !passthrough && plan.Hls,
         };
         _jobs[job.Token] = job;
+        _bySource[Path.GetFullPath(sourcePath)] = job.Token;
         LatestUrl = UrlFor(job);
 
         if (target is null)
         {
-            // 零处理 / 复用命中：抽完字幕直接可播。
+            // 零处理 / 复用命中：字幕后台抽取（大文件多条字幕要完整读一遍源文件，
+            // 不阻塞提交——窗口立刻有内容，抽完自动置可播）。
             // 直出路径的字幕落中央缓存（{key}\subs\），不再往源视频目录写 subs\ 垃圾。
             var subsRoot = passthrough
                 ? CacheKey.ArtifactDirFor(sourcePath)
                 : artifactDir;
-            var subs = await ExtractSubsSafeAsync(sourcePath, info, subsRoot, ct);
-            job.SetServing(subs);
+            _ = ExtractSubsAndServeAsync(job, sourcePath, info, subsRoot, ct);
         }
         else
         {
@@ -285,6 +315,29 @@ public sealed class SessionServer : IAsyncDisposable
                 set.Add(entry);
         }
         return set;
+    }
+
+    /// <summary>按 token 查 job 状态（WPF 文件夹行徽标用）；查不到返回 null。</summary>
+    public JobState? JobStateFor(string token)
+        => _jobs.TryGetValue(token, out var job) ? job.State : null;
+
+    /// <summary>直出/复用命中：后台抽字幕，完成后置可播（抽字幕失败只丢字幕，不拖垮视频）。</summary>
+    private static async Task ExtractSubsAndServeAsync(
+        MediaJob job, string sourcePath, MediaInfo info, string subsRoot, CancellationToken ct)
+    {
+        try
+        {
+            var subs = await ExtractSubsSafeAsync(sourcePath, info, subsRoot, ct);
+            job.SetServing(subs);
+        }
+        catch (OperationCanceledException)
+        {
+            job.SetFailed("已取消");
+        }
+        catch (Exception ex)
+        {
+            job.SetFailed(ex.Message);
+        }
     }
 
     /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
@@ -397,6 +450,20 @@ public sealed class SessionServer : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            // 转码成功但落位失败（如旧产物被播放器占用）等：清掉临时产物，防残留
+            try
+            {
+                if (plan.Hls)
+                {
+                    if (Directory.Exists(target.TempPath))
+                        Directory.Delete(target.TempPath, recursive: true);
+                }
+                else if (File.Exists(target.TempPath))
+                {
+                    File.Delete(target.TempPath);
+                }
+            }
+            catch { /* 尽力而为 */ }
             job.SetFailed(ex.Message);
         }
         finally
@@ -431,7 +498,7 @@ public sealed class SessionServer : IAsyncDisposable
             string.IsNullOrEmpty(s.Title) && LangNames.TryGetValue(s.Language, out var n) ? n : s.Title)).ToList();
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
-            job.Title, job.PlanExplanation, job.SourcePath, subs, job.IsHls);
+            job.Title, job.PlanExplanation, subs, job.IsHls);
     }
 
     private FolderStatusDto ToFolderDto(FolderJob folder)

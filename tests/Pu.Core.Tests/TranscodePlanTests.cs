@@ -48,7 +48,6 @@ public class TranscodePlanTests
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a copy", Args(plan));
         // HLS（m3u8 + TS 分片）：浏览器拿到首个分片即播，不受 moov/Range/渐进解析影响
-        Assert.Contains("-f hls", Args(plan));
         Assert.Contains("-hls_time 2", Args(plan));
         Assert.Contains("independent_segments", Args(plan));
         Assert.Equal("mp4.hls", plan.OutputExtension);
@@ -71,9 +70,7 @@ public class TranscodePlanTests
         Assert.Equal(PlanKind.Remux, plan.Kind);
         Assert.Contains("-c:v copy", Args(plan));
         Assert.Contains("-c:a copy", Args(plan));
-        // HLS 统一；eac3 音轨 copy 保留
-        Assert.Contains("-c:a copy", Args(plan));
-        Assert.Contains("-f hls", Args(plan));
+        // HLS 统一；eac3 音轨 copy 保留（封装格式 -f hls 由 Transcoder 统一追加）
         Assert.True(plan.Hls);
     }
 
@@ -121,6 +118,7 @@ public class TranscodePlanTests
             Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Nvenc, isFastStart: true);
         Assert.Equal(PlanKind.FullTranscode, plan.Kind);
         Assert.Contains("h264_nvenc", Args(plan));
+        Assert.Equal("h264_nvenc", plan.EncoderName);
     }
 
     [Fact]
@@ -131,6 +129,61 @@ public class TranscodePlanTests
         Assert.Equal(PlanKind.FullTranscode, plan.Kind);
         Assert.Contains("libx264", Args(plan));
         Assert.Contains("-crf 23", Args(plan));
+        Assert.Equal("libx264", plan.EncoderName);
+    }
+
+    // ── 硬编失败兑底（WithSoftwareEncoder）──
+
+    [Fact]
+    public void 硬编失败_替换为Libx264并去掉硬件解码()
+    {
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Nvenc, isFastStart: true);
+        var fallback = plan.WithSoftwareEncoder();
+
+        Assert.Equal(PlanKind.FullTranscode, fallback.Kind);
+        Assert.Equal("libx264", fallback.EncoderName);
+        Assert.Empty(fallback.EffectiveInputArgs); // -hwaccel 一并去掉
+        Assert.Contains("-c:v libx264", Args(fallback));
+        Assert.Contains("-crf 23", Args(fallback));
+        Assert.DoesNotContain("h264_nvenc", Args(fallback));
+        Assert.DoesNotContain("-cq 23", Args(fallback));
+        // 与硬编计划其余部分一致（map/像素格式/关键帧/HLS 参数原样保留）
+        Assert.Equal("mp4.hls", fallback.OutputExtension);
+        Assert.True(fallback.Hls);
+        Assert.Contains("-force_key_frames", Args(fallback));
+        Assert.Contains("-hls_time 2", Args(fallback));
+        Assert.Contains("libx264 软编兜底", fallback.Explanation);
+    }
+
+    [Fact]
+    public void 硬编失败_Amf块替换正确()
+    {
+        // AMF 的参数块最长（-quality speed -rc cqp -qp_i 23 -qp_p 23），验证整块替换不残留
+        var catalog = new EncoderCatalog(["h264_amf", "libx264"]);
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), catalog, isFastStart: true);
+        var fallback = plan.WithSoftwareEncoder();
+        Assert.Contains("-c:v libx264", Args(fallback));
+        Assert.DoesNotContain("h264_amf", Args(fallback));
+        Assert.DoesNotContain("-qp_i", Args(fallback));
+        Assert.DoesNotContain("-qp_p", Args(fallback));
+    }
+
+    [Fact]
+    public void 硬编失败_软编计划原样返回()
+    {
+        var plan = TranscodePlan.Create(
+            Media("hevc", bitDepth: 12, pixFmt: "yuv420p12le", profile: "Main 12"), Soft, isFastStart: true);
+        Assert.Same(plan, plan.WithSoftwareEncoder());
+    }
+
+    [Fact]
+    public void 硬编失败_Remux计划原样返回()
+    {
+        var plan = TranscodePlan.Create(Media("h264"), Nvenc, isFastStart: false); // Remux
+        Assert.Null(plan.EncoderName);
+        Assert.Same(plan, plan.WithSoftwareEncoder());
     }
 
     [Theory]
