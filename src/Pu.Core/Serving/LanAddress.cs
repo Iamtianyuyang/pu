@@ -51,7 +51,8 @@ public static class LanAddress
         if (ni.Type is NetworkInterfaceType.Tunnel or NetworkInterfaceType.Ppp)
             return true; // Tailscale / WireGuard / OpenVPN 隧道、拨号
         var haystack = $"{ni.Name} {ni.Description}";
-        return VirtualKeywords.Any(haystack.Contains);
+        // 大小写不敏感：Windows 网卡名大小写各异（VirtualBox / vEthernet / TAP- …）
+        return VirtualKeywords.Any(kw => haystack.Contains(kw, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>虚拟网卡关键词（名字或描述，如 “vEthernet (Default Switch)”“Tailscale Tunnel”）。</summary>

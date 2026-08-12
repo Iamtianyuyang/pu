@@ -64,6 +64,41 @@ public class SubtitleTests
     }
 
     [Fact]
+    public async Task 按源隔离的字幕目录_各自复用互不串扰()
+    {
+        // 模拟 SessionServer 按源指纹隔离的调用：A 的抽取不得触碰 B 的字幕
+        using var dir = new TempDir();
+        var srcA = Path.Combine(dir.Path, "a.mkv");
+        var srcB = Path.Combine(dir.Path, "b.mkv");
+        File.WriteAllBytes(srcA, [1, 2, 3, 4]);
+        File.WriteAllBytes(srcB, [5, 6, 7, 8]);
+        var subsA = Path.Combine(dir.Path, "subs", "keyA");
+        var subsB = Path.Combine(dir.Path, "subs", "keyB");
+        foreach (var (src, subDir) in new[] { (srcA, subsA), (srcB, subsB) })
+        {
+            Directory.CreateDirectory(Path.Combine(subDir, "subs"));
+            File.WriteAllText(Path.Combine(subDir, "subs", "3.vtt"), "WEBVTT: 各自字幕");
+            var fi = new FileInfo(src);
+            File.WriteAllText(Path.Combine(subDir, "subs", ".meta"),
+                $"{{\"size\":{fi.Length},\"mtime\":{fi.LastWriteTimeUtc.Ticks}}}");
+        }
+
+        var info = new MediaInfo
+        {
+            FileName = srcA,
+            FormatName = "matroska",
+            Streams = [new SubtitleStreamInfo(3, "subrip", "chi", "")],
+        };
+        var subs = await SubtitleExtractor.ExtractAsync(srcA, info, subsA);
+
+        var sub = Assert.Single(subs);
+        Assert.Equal(Path.Combine(subsA, "subs", "3.vtt"), sub.VttPath);
+        Assert.NotEqual(Path.Combine(subsB, "subs", "3.vtt"), sub.VttPath);
+        // B 的同流序号字幕原样保留，没被 A 的抽取覆盖
+        Assert.Equal("WEBVTT: 各自字幕", await File.ReadAllTextAsync(Path.Combine(subsB, "subs", "3.vtt")));
+    }
+
+    [Fact]
     public async Task Mkv内嵌Srt_抽成WebVTT()
     {
         if (!TestEnv.HasFfmpeg) return;

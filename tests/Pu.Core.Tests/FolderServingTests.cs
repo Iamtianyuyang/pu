@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Pu.Core.Cache;
+using Pu.Core.Common;
 using Pu.Core.Serving;
 using Xunit;
 
@@ -90,15 +92,173 @@ public class FolderServingTests
         Assert.Equal(JobState.Serving, job3.State);
     }
 
-    /// <summary>生成 1s 的 H.264+AAC faststart MP4（128×72，直出路径）。</summary>
-    private static string CreateSampleMp4(string dir, string name)
+    [Fact]
+    public async Task 源文件被替换_重新提交_不复用旧Job()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var sample = Path.Combine(dir.Path, "replaced.mp4");
+        CreateSampleMp4(dir.Path, "replaced.mp4");
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18924);
+        var job1 = await server.SubmitAsync(sample);
+        Assert.Equal(JobState.Serving, job1.State); // 直出：立即可播
+
+        // 同一路径的源文件被替换（内容/mtime 变化）→ 指纹变 → 不得复用旧任务
+        CreateSampleMp4(dir.Path, "replaced.mp4");
+        var job2 = await server.SubmitAsync(sample);
+        Assert.NotSame(job1, job2);
+        Assert.Equal(JobState.Serving, job2.State);
+    }
+
+    [Fact]
+    public async Task 运行期修改转码策略_重新提交_不复用旧Job()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var sample = CreateSampleMp4(dir.Path, "policy.mp4");
+
+        var configDir = Path.Combine(dir.Path, "cfg");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(Path.Combine(configDir, "config.json"), "{\"transcode\":\"always\"}");
+        var oldConfig = Environment.GetEnvironmentVariable("PU_CONFIG_DIR");
+        var oldCache = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
+        Environment.SetEnvironmentVariable("PU_CONFIG_DIR", configDir);
+        Environment.SetEnvironmentVariable("PU_CACHE_DIR", Path.Combine(dir.Path, "cache"));
+        try
+        {
+            await using var server = await SessionServer.StartAsync(preferredPort: 18925);
+
+            // always：任何视频强制转码（gpu:*;fmt:5 变体）
+            var job1 = await server.SubmitAsync(sample);
+            Assert.Equal(JobState.Transcoding, job1.State);
+            Assert.Contains("gpu:", job1.Variant);
+            await WaitForServingAsync(job1);
+
+            // 运行期改为 auto → 同一文件应走直出（fmt:5 变体）→ 变体不同 → 不复用旧 job
+            File.WriteAllText(Path.Combine(configDir, "config.json"), "{\"transcode\":\"auto\"}");
+            var job2 = await server.SubmitAsync(sample);
+            Assert.NotSame(job1, job2);
+            Assert.Equal("fmt:5", job2.Variant);
+            Assert.Equal(JobState.Serving, job2.State);
+
+            // 再提交（配置不变）→ 回到复用路径
+            var job3 = await server.SubmitAsync(sample);
+            Assert.Same(job2, job3);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CONFIG_DIR", oldConfig);
+            Environment.SetEnvironmentVariable("PU_CACHE_DIR", oldCache);
+        }
+    }
+
+    [Fact]
+    public async Task StopAsync_取消后台转码并等待退出_临时产物已清理()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        CreateSampleMp4(dir.Path, "stop.mp4", durationSeconds: 5);
+
+        var configDir = Path.Combine(dir.Path, "cfg");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(Path.Combine(configDir, "config.json"), "{\"transcode\":\"always\"}");
+        var oldConfig = Environment.GetEnvironmentVariable("PU_CONFIG_DIR");
+        Environment.SetEnvironmentVariable("PU_CONFIG_DIR", configDir);
+        try
+        {
+            await using var server = await SessionServer.StartAsync(preferredPort: 18926);
+            var job = await server.SubmitAsync(Path.Combine(dir.Path, "stop.mp4"));
+            Assert.Equal(JobState.Transcoding, job.State);
+
+            // 关闭服务：取消生命周期令牌并等待后台任务（ffmpeg）退出
+            await server.StopAsync();
+            Assert.Equal(0, server.ActiveJobCount);
+            Assert.Equal(JobState.Failed, job.State); // 已取消
+
+            // 半截临时产物被清理，不留 .tmp 残渣
+            var puDir = Path.Combine(dir.Path, ".pu");
+            if (Directory.Exists(puDir))
+                Assert.DoesNotContain(Directory.EnumerateFileSystemEntries(puDir),
+                    p => p.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CONFIG_DIR", oldConfig);
+        }
+    }
+
+    [Fact]
+    public async Task 就地产物复用_字幕目录按源指纹隔离_不写进HLS产物目录()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+
+        // 生成带内嵌 SRT 字幕的 mkv（非 MP4 容器 → Remux HLS 就地产物）
+        var baseVideo = Path.Combine(dir.Path, "base.mp4");
+        var make = await ProcessRunner.RunAsync("ffmpeg", new[]
+        {
+            "-y", "-v", "error",
+            "-f", "lavfi", "-i", "testsrc=duration=1:size=128x72:rate=10",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+            baseVideo,
+        });
+        Assert.True(make.ExitCode == 0, $"生成基础视频失败: {make.StdErr}");
+        var srt = Path.Combine(dir.Path, "sub.srt");
+        File.WriteAllText(srt, "1\n00:00:00,000 --> 00:00:01,000\n你好\n");
+        var mkv = Path.Combine(dir.Path, "subbed.mkv");
+        var mux = await ProcessRunner.RunAsync("ffmpeg", new[]
+        {
+            "-y", "-v", "error", "-i", baseVideo, "-i", srt,
+            "-map", "0", "-map", "1", "-c", "copy", "-c:s", "srt",
+            mkv,
+        });
+        Assert.True(mux.ExitCode == 0, $"封装字幕失败: {mux.StdErr}");
+
+        await using var server1 = await SessionServer.StartAsync(preferredPort: 18927);
+        var job1 = await server1.SubmitAsync(mkv);
+        await WaitForServingAsync(job1);
+
+        // 字幕按源指纹隔离在 .pu/{指纹}/subs，不在 HLS 产物目录里
+        var puDir = Path.Combine(dir.Path, ".pu");
+        var subsDir = Path.Combine(puDir, CacheKey.For(mkv), "subs");
+        var hlsDir = Directory.GetDirectories(puDir)
+            .Single(d => Path.GetFileName(d).StartsWith("subbed.mkv."));
+        Assert.DoesNotContain(Directory.GetDirectories(hlsDir), d => Path.GetFileName(d) == "subs");
+
+        // 模拟重启（新服务实例，内存去重表清空）→ 命中就地产物 → 字幕必须复用 .pu/{指纹}/subs，
+        // 不得在 HLS 产物目录内重新抽取（旧 bug：artifactDir 已是产物目录还往下拼指纹）
+        await using var server2 = await SessionServer.StartAsync(preferredPort: 18928);
+        var job2 = await server2.SubmitAsync(mkv);
+        await WaitForServingAsync(job2);
+
+        var sub = Assert.Single(job2.Subtitles);
+        Assert.StartsWith(Path.Combine(subsDir) + Path.DirectorySeparatorChar, sub.VttPath);
+        Assert.False(Directory.Exists(Path.Combine(hlsDir, "subs")));
+        Assert.Equal(job1.ArtifactPath, job2.ArtifactPath); // 同一产物（复用命中）
+    }
+
+    private static async Task WaitForServingAsync(MediaJob job)
+    {
+        for (var i = 0; i < 120; i++)
+        {
+            if (job.State == JobState.Serving) return;
+            if (job.State == JobState.Failed) throw new InvalidOperationException($"转码失败: {job.Error}");
+            await Task.Delay(250);
+        }
+        throw new TimeoutException("转码未在 30s 内完成");
+    }
+
+    /// <summary>生成 H.264+AAC faststart MP4（128×72，直出路径）。</summary>
+    private static string CreateSampleMp4(string dir, string name, int durationSeconds = 1)
     {
         var sample = Path.Combine(dir, name);
         var r = Pu.Core.Common.ProcessRunner.RunAsync("ffmpeg", new[]
         {
             "-y", "-v", "error",
-            "-f", "lavfi", "-i", "testsrc=duration=1:size=128x72:rate=10",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+            "-f", "lavfi", "-i", $"testsrc=duration={durationSeconds}:size=128x72:rate=10",
+            "-f", "lavfi", "-i", $"sine=frequency=440:duration={durationSeconds}",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
             sample,
         }).GetAwaiter().GetResult();

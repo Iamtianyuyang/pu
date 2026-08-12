@@ -11,7 +11,10 @@ public sealed record ArtifactTarget(string ArtifactPath, string TempPath, string
 /// 产物落点决策：优先源文件旁的 .pu\ 子目录——就地操作，中央缓存不再复制第二份；
 /// 源目录不可写（只读 NAS / 权限 / 光盘）→ 回退中央缓存（%LOCALAPPDATA%\Pu\cache，20GB LRU）。
 /// 就地产物先写 .tmp 再改名（不留半截 mp4），配套 .json 清单校验复用（源大小 | mtime | 策略变体）；
+/// 产物路径内嵌源指纹+变体键（.pu/{name}.{key}.{ext}）：源替换/策略变更 → 新键 → 新路径，
+/// 不覆盖旧产物，旧播放会话不受影响。
 /// .pu\ 目录置 hidden 属性；产物路径登记进 sidecars.log，`pu --clean` 统一清除。
+/// 字幕等副产物按源指纹隔离在 .pu/{指纹}/subs，清单只存不可逆字幕键（不存绝对路径，防 HLS 目录泄露）。
 /// </summary>
 public static class ArtifactLocator
 {
@@ -30,7 +33,7 @@ public static class ArtifactLocator
     /// <summary>命中可复用的产物：就地产物（清单校验通过）或中央缓存旧产物；都没有 → null。</summary>
     public static string? TryGetReusable(string sourcePath, string outputExtension, string? variant)
     {
-        var sidecar = SidecarArtifactPath(sourcePath, outputExtension);
+        var sidecar = SidecarArtifactPath(sourcePath, outputExtension, variant);
         if (File.Exists(sidecar) && ManifestMatches(sidecar, sourcePath, variant))
             return sidecar;
 
@@ -48,7 +51,7 @@ public static class ArtifactLocator
         var sidecarDir = Path.Combine(dir, SidecarDirName);
         if (IsWritable(dir, sidecarDir))
         {
-            var artifact = SidecarArtifactPath(sourcePath, outputExtension);
+            var artifact = SidecarArtifactPath(sourcePath, outputExtension, variant);
             return new ArtifactTarget(artifact,
                 IsHlsLayout(outputExtension) ? ArtifactDirOf(artifact) + ".tmp" : artifact + ".tmp",
                 sidecarDir, Sidecar: true);
@@ -70,6 +73,20 @@ public static class ArtifactLocator
             StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>从产物路径反推 .pu 目录（HLS 产物向上两级，普通产物向上一级）；不在 .pu 下返回 null。</summary>
+    public static string? SidecarDirOf(string artifactPath)
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(artifactPath));
+        if (dir is null) return null;
+        if (string.Equals(Path.GetFileName(dir), SidecarDirName, StringComparison.OrdinalIgnoreCase))
+            return dir;
+        var parent = Path.GetDirectoryName(dir);
+        return parent is not null
+            && string.Equals(Path.GetFileName(parent), SidecarDirName, StringComparison.OrdinalIgnoreCase)
+            ? parent
+            : null;
+    }
+
     /// <summary>HLS 布局：扩展名以 .hls 结尾时，产物是 {name}.{ext}/index.m3u8 目录式。</summary>
     public static bool IsHlsLayout(string outputExtension)
         => outputExtension.EndsWith(".hls", StringComparison.OrdinalIgnoreCase);
@@ -77,13 +94,16 @@ public static class ArtifactLocator
     /// <summary>HLS 产物的目录（{name}.mp4.hls）。</summary>
     public static string ArtifactDirOf(string artifactPath) => Path.GetDirectoryName(artifactPath)!;
 
-    /// <summary>生产成功后写复用清单（与产物同名的 .json）。</summary>
+    /// <summary>生产成功后写复用清单（与产物同名的 .json）。
+    /// 只存不可逆字幕键（sha1 指纹），不存绝对源路径：HLS 产物目录内文件可被 /hls/ 访问，
+    /// 清单泄露也不暴露宿主机路径；clean 按清单键删字幕，源文件删除/修改都不受影响。</summary>
     public static void WriteManifest(string artifactPath, string sourcePath, string? variant)
     {
         try
         {
             var fi = new FileInfo(sourcePath);
-            var json = JsonSerializer.Serialize(new Manifest(fi.Length, fi.LastWriteTimeUtc.Ticks, variant));
+            var json = JsonSerializer.Serialize(new Manifest(fi.Length, fi.LastWriteTimeUtc.Ticks, variant,
+                CacheKey.For(sourcePath))); // 生产时的字幕目录键
             File.WriteAllText(ManifestPath(artifactPath), json);
         }
         catch { /* 清单写失败只是下次重转 */ }
@@ -119,8 +139,12 @@ public static class ArtifactLocator
         {
             var artifact = line.Trim();
             if (artifact.Length == 0) continue;
-            // HLS 产物（index.m3u8）→ 整个 {name}.mp4.hls 目录删掉（分片都在里面）
             var dir = Path.GetDirectoryName(artifact);
+            // 字幕副产物：按生产时键隔离在 .pu/{键}/subs（清单里存的不可逆字幕键，不依赖源文件存在）；
+            // 旧版无键的清单 → 整删 .pu/subs 兜底。
+            // 必须先读清单再删产物：HLS 清单在产物目录里，目录删掉后就读不到了。
+            var subsKey = ManifestSubsKey(artifact);
+            // HLS 产物（index.m3u8）→ 整个 {name}.mp4.hls 目录删掉（分片都在里面）
             if (dir is not null && Path.GetFileName(artifact) == "index.m3u8" && Directory.Exists(dir))
             {
                 freed += DirSize(dir);
@@ -131,11 +155,13 @@ public static class ArtifactLocator
                 try { freed += new FileInfo(artifact).Length; File.Delete(artifact); } catch { }
             }
             try { File.Delete(ManifestPath(artifact)); } catch { }
-            // 字幕副产物 .pu/subs（HLS 产物目录 {name}.mp4.hls 需向上取一级到 .pu）
             var subsParent = Path.GetFileName(dir) == SidecarDirName ? dir : Path.GetDirectoryName(dir);
             if (subsParent is not null && Path.GetFileName(subsParent) == SidecarDirName)
             {
-                try { Directory.Delete(Path.Combine(subsParent, "subs"), recursive: true); } catch { }
+                var subsDir = subsKey is { Length: > 0 } k
+                    ? Path.Combine(subsParent, k)
+                    : Path.Combine(subsParent, "subs");
+                try { Directory.Delete(subsDir, recursive: true); } catch { }
             }
             // 空的 .pu 一并删（目录删完才算空）
             try
@@ -165,13 +191,33 @@ public static class ArtifactLocator
         return total;
     }
 
-    private static string SidecarArtifactPath(string sourcePath, string outputExtension)
+    private static string SidecarArtifactPath(string sourcePath, string outputExtension, string? variant)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
-        var basePath = Path.Combine(dir, SidecarDirName, $"{Path.GetFileName(sourcePath)}.{outputExtension}");
+        // 产物名内嵌源指纹+变体键：源替换/策略变更 → 新键 → 新路径，旧产物与旧播放会话不受影响
+        var key = variant is null ? CacheKey.For(sourcePath) : CacheKey.For(sourcePath, variant);
+        var name = SafeStem(Path.GetFileName(sourcePath));
+        var basePath = Path.Combine(dir, SidecarDirName,
+            $"{name}.{key}.{outputExtension}");
         return IsHlsLayout(outputExtension)
-            ? Path.Combine(basePath, "index.m3u8") // {name}.mp4.hls/index.m3u8
+            ? Path.Combine(basePath, "index.m3u8") // {name}.{key}.mp4.hls/index.m3u8
             : basePath;
+    }
+
+    /// <summary>产物显示名：完整源文件名 + 40 位指纹键 + 扩展名可能突破 Windows
+    /// 单路径组件上限（255），创建 .tmp 文件或 HLS 目录时直接失败。
+    /// 截断到安全预算并保留可读前缀；避免从代理对中间截断（emoji 等补充平面字符）；
+    /// 去掉截断后可能出现的尾部点/空格（Windows 会静默修剪它们，两个名字会撞到同一个组件）。</summary>
+    private static string SafeStem(string stem)
+    {
+        const int maxStem = 140; // 140 + '.' + 40 位键 + ".mp4.hls"(8) + ".tmp"(4) ≈ 194 < 255
+        if (stem.Length <= maxStem) return stem;
+        var cut = stem[..maxStem];
+        // 别从代理对中间截断：边界是低代理说明代理对完整落在 cut 内，不需要动；
+        // 边界是孤立高代理说明低半被截掉了（代理对卡在 139/140），回退一个码元
+        if (char.IsHighSurrogate(cut[^1])) cut = cut[..^1];
+        cut = cut.TrimEnd(' ', '.');
+        return cut.Length > 0 ? cut : "media";
     }
 
     private static string CentralArtifactPath(string sourcePath, string outputExtension, string? variant)
@@ -220,5 +266,19 @@ public static class ArtifactLocator
         }
     }
 
-    private sealed record Manifest(long Size, long MtimeUtcTicks, string? Variant);
+    /// <summary>字幕目录键记录在清单里：--clean 直接按生产时键删除，不依赖源文件仍然存在（旧清单无键 → 兜底整删）。</summary>
+    private static string? ManifestSubsKey(string artifactPath)
+    {
+        try
+        {
+            var m = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(ManifestPath(artifactPath)));
+            return m?.SubsKey;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed record Manifest(long Size, long MtimeUtcTicks, string? Variant, string? SubsKey = null);
 }

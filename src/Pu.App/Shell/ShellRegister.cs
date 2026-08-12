@@ -40,13 +40,32 @@ public static class ShellRegister
         dirCommand.SetValue(null, $"\"{exe}\" \"%1\"");
     }
 
-    public static void Unregister(IReadOnlyList<string> extensions)
+    /// <summary>注销右键菜单。extensions 为可选兜底（兼容旧调用方）；
+    /// 真正的清理以枚举 SystemFileAssociations 下所有 shell\Pu 为准——
+    /// 从 extensions.json 删掉的旧扩展名已不在清单里，只删清单键会永久残留（含卸载后）。</summary>
+    public static void Unregister(IReadOnlyList<string>? extensions = null)
     {
-        foreach (var ext in extensions)
+        using var root = Registry.CurrentUser.OpenSubKey(@"Software\Classes\SystemFileAssociations");
+        if (root is not null)
         {
-            if (!ext.StartsWith('.')) continue;
-            Registry.CurrentUser.DeleteSubKeyTree(
-                $@"Software\Classes\SystemFileAssociations\{ext}\shell\Pu", throwOnMissingSubKey: false);
+            foreach (var ext in root.GetSubKeyNames())
+            {
+                try
+                {
+                    Registry.CurrentUser.DeleteSubKeyTree(
+                        $@"Software\Classes\SystemFileAssociations\{ext}\shell\Pu", throwOnMissingSubKey: false);
+                }
+                catch { /* 单个键失败不影响其余清理 */ }
+            }
+        }
+        if (extensions is not null)
+        {
+            foreach (var ext in extensions)
+            {
+                if (!ext.StartsWith('.')) continue;
+                Registry.CurrentUser.DeleteSubKeyTree(
+                    $@"Software\Classes\SystemFileAssociations\{ext}\shell\Pu", throwOnMissingSubKey: false);
+            }
         }
         Registry.CurrentUser.DeleteSubKeyTree(
             @"Software\Classes\Directory\shell\Pu", throwOnMissingSubKey: false);

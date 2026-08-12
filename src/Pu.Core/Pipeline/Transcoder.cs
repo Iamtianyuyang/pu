@@ -31,7 +31,7 @@ public static class Transcoder
         }
         if (result.ExitCode != 0 && plan.EncoderName is { } enc && enc != "libx264")
         {
-            // 硬件编码器本身失败（驱动崩溃/分辨率超限）→ 清残片，libx264 软编兑底一次
+            // 硬件编码器本身失败（驱动崩溃/分辨率超限）→ 清残片，libx264 软编兜底一次
             CleanupArtifact(outputPath, plan);
             var fallback = plan.WithSoftwareEncoder();
             result = await RunFfmpegAsync(input, fallback.EffectiveInputArgs, fallback.OutputArgs,

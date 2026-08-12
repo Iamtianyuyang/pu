@@ -43,7 +43,6 @@ public sealed partial class MainWindow : Window, IDisposable
     private bool _allowClose;
     private bool _dotPulsing;
     private bool _firstShow = true;
-    private string? _busyPath; // 正在分析/扫描的路径：其它任务的进度事件不顶掉它的视图
 
     public event Action? CloseRequested;
     public event Action<int>? FolderFileClicked;
@@ -119,24 +118,33 @@ public sealed partial class MainWindow : Window, IDisposable
         });
     }
 
+    /// <summary>job 进度/状态事件入口：只更新「当前选中 job」自己的事件。
+    /// 历史 job 的事件永久挂着（WireJob 不取消订阅），新任务显示后它们不得把窗口抢回去；
+    /// 切到文件夹/错误/空闲视图后（_job 已清空），后台任务的事件同样不再刷新窗口。</summary>
     public void SetJob(MediaJob? job)
     {
         OnUi(() =>
         {
             if (job is null)
             {
-                _busyPath = null;
                 if (_folder is not null) ShowFolder(_folder);
                 else ShowIdle();
                 return;
             }
 
-            // 其它任务的进度事件不顶掉当前「正在分析」视图
-            // （提交 A 后立刻提交 B：A 的进度更新不该把 B 的 busy 视图挤走）
-            if (_busyPath is not null
-                && !string.Equals(job.SourcePath, _busyPath, StringComparison.OrdinalIgnoreCase))
-                return;
-            _busyPath = null;
+            // 事件只属于当前选中 job：旧任务（或已切走的任务）的进度更新直接丢弃
+            if (!ReferenceEquals(_job, job)) return;
+            _job = job;
+            ShowJob(job);
+        });
+    }
+
+    /// <summary>新任务初始显示（分析完成 / 文件夹点开文件）：无条件切换到 job 视图。
+    /// 与 SetJob 区分：这是有意的显示动作，不是事件驱动刷新，不受当前选中 job 约束。</summary>
+    public void ActivateJob(MediaJob job)
+    {
+        OnUi(() =>
+        {
             _job = job;
             ShowJob(job);
         });
@@ -158,7 +166,6 @@ public sealed partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            _busyPath = null;
             _job = null;
             ShowFolder(folder);
         });
@@ -211,7 +218,6 @@ public sealed partial class MainWindow : Window, IDisposable
         OnUi(() =>
         {
             _job = null;
-            _busyPath = path;
             BusyTitleText.Text = Directory.Exists(path)
                 ? Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar))
                 : Path.GetFileName(path);
@@ -436,7 +442,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void BackToFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_folder is not null) ShowFolder(_folder);
+        if (_folder is null) return;
+        _job = null; // 回到文件夹视图：后台 job 的进度事件不再把窗口抢回 job 视图
+        ShowFolder(_folder);
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

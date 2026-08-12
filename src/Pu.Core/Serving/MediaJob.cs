@@ -30,6 +30,13 @@ public sealed class MediaJob
     public bool IsHls { get; init; }
     public required string PlanExplanation { get; init; }
 
+    /// <summary>产物策略变体（转码策略|编码器|格式版本）：任务身份的一部分，
+    /// 提交时核对——运行期修改 transcode 配置或源文件被替换 → 不复用旧 job，重新生产。</summary>
+    public string? Variant { get; init; }
+
+    /// <summary>源文件是否有视频流（复用核对时算“当前策略变体”用，免重复探测）。</summary>
+    public bool HasVideo { get; init; }
+
     public JobState State { get { lock (_gate) return _state; } }
     public double Progress { get { lock (_gate) return _progress; } }
     public string? Error { get { lock (_gate) return _error; } }

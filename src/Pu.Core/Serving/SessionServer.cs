@@ -43,13 +43,31 @@ public sealed class SessionServer : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
-    // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次
-    private readonly ConcurrentDictionary<string, Task<MediaJob>> _opening = new(StringComparer.Ordinal);
-    // 单文件模式同源去重：源路径 → job token（转码中/已就绪都复用，避免重复转码与产物互相覆盖）
+    // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次。
+    // 用 Lazy 包任务工厂：GetOrAdd 的工厂本身可能并发执行多次，但只有胜出的
+    // Lazy 会被访问 Value——落选 Lazy 的工厂永远不会运行，不会启动多余探测/转码
+    private readonly ConcurrentDictionary<string, Lazy<Task<MediaJob>>> _opening = new(StringComparer.Ordinal);
+    // 单文件模式同源去重：源文件指纹（路径|大小|mtime）→ job token。
+    // 指纹或策略变体任一变化（源被替换 / 运行期改 transcode 配置）→ 不复用，重新生产
     private readonly ConcurrentDictionary<string, string> _bySource = new(StringComparer.OrdinalIgnoreCase);
-    // 同源提交的在途去重：并发提交同一文件只跑一次探测/注册
-    private readonly ConcurrentDictionary<string, Task<MediaJob>> _submitting = new(StringComparer.OrdinalIgnoreCase);
+    // 同源提交的在途去重：并发提交同一文件只跑一次探测/注册（Lazy 保证工厂只执行一次）
+    private readonly ConcurrentDictionary<string, Lazy<Task<MediaJob>>> _submitting = new(StringComparer.OrdinalIgnoreCase);
+    // 后台任务登记（转码/抽字幕）：StopAsync 取消后逐个等待退出，防止关闭时 ffmpeg 仍在写缓存
+    private readonly ConcurrentDictionary<string, Task> _background = new(StringComparer.Ordinal);
+    // 最近一次媒体传输时刻（token → ticks）：LRU 保护判定用。
+    // HLS 播放是每 ~2s 一个分片请求，用“窗口内有过传输”而非“正在传输”判定，
+    // 避免分片间隙被淘汰；播放停止超过窗口期后条目重新交给 LRU。
+    private readonly ConcurrentDictionary<string, long> _lastTransfer = new(StringComparer.Ordinal);
+    internal static TimeSpan TransferProtectWindow { get; set; } = TimeSpan.FromMinutes(2);
+    // 服务生命周期令牌：独立于 HTTP 请求（客户端断开不连坐取消），仅随服务停止统一取消
+    private readonly CancellationTokenSource _lifetime = new();
     private readonly WebApplication _app;
+
+    /// <summary>服务生命周期令牌：传给后台任务（探测/转码/抽字幕），StopAsync 时统一取消。</summary>
+    public CancellationToken ShutdownToken => _lifetime.Token;
+
+    /// <summary>媒体传输开始：刷新该条目的最近传输时刻（LRU 保护窗口内不淘汰）。</summary>
+    internal void BeginTransfer(string token) => _lastTransfer[token] = DateTime.UtcNow.Ticks;
 
     /// <summary>请求级诊断日志（Pu.App 注入；不看 UA/Range 排查不了移动端播放问题）。</summary>
     public static Action<string>? LogSink;
@@ -109,6 +127,7 @@ public sealed class SessionServer : IAsyncDisposable
                     + $" ua={context.Request.Headers.UserAgent}");
             }
             // HLS：给 m3u8（播放器会按相对路径拉分片）；MP4：Range 直服
+            server.BeginTransfer(token);
             return job.IsHls
                 ? Results.File(job.ArtifactPath, "application/vnd.apple.mpegurl")
                 : Results.File(job.ArtifactPath, job.ContentType, enableRangeProcessing: true);
@@ -123,8 +142,13 @@ public sealed class SessionServer : IAsyncDisposable
             if (file.Length == 0 || file.Length > 64
                 || !file.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-'))
                 return Results.BadRequest();
+            // 只提供播放列表与 TS 分片：产物目录内的其它文件（如复用清单 index.m3u8.json）一律不外泄
+            if (!file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
+                && !file.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
+                return Results.NotFound();
             var path = Path.Combine(Path.GetDirectoryName(job.ArtifactPath)!, file);
             if (!File.Exists(path)) return Results.NotFound();
+            server.BeginTransfer(token);
             var type = file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
                 ? "application/vnd.apple.mpegurl"
                 : "video/mp2t";
@@ -190,8 +214,9 @@ public sealed class SessionServer : IAsyncDisposable
             server.Touch();
             if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
             if (folder.Files.All(f => f.Index != index)) return Results.NotFound();
-            // 不用请求级 CancellationToken：客户端断开（拿到 URL 后关闭连接）不能连坐取消后台转码
-            var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+            // 不用请求级 CancellationToken：客户端断开（拿到 URL 后关闭连接）不能连坐取消后台转码；
+            // 用服务生命周期令牌：只有服务停止时才取消（StopAsync 内部统一处理）
+            var job = await server.OpenFolderFileAsync(folder, index, server.ShutdownToken);
             return Results.Json(new OpenResultDto(server.UrlFor(job)), JobStatusJsonContext.Default.OpenResultDto);
         });
 
@@ -200,29 +225,49 @@ public sealed class SessionServer : IAsyncDisposable
     }
 
     /// <summary>提交一个媒体文件：探测 → 决策 → 注册 job，转码/抽字幕在后台并行跑。
-    /// 同一源文件重复/并发提交（转码中或已就绪）直接复用已有 job，不重复转码。</summary>
+    /// 同一源文件（指纹一致且策略变体一致）重复/并发提交直接复用已有 job，不重复转码。</summary>
     public async Task<MediaJob> SubmitAsync(string sourcePath, CancellationToken ct = default)
     {
-        var key = Path.GetFullPath(sourcePath);
-        // 同源去重：避免两个 ffmpeg 写同一个产物临时目录互相覆盖，
-        // 也避免重新生产时删除正在被播放的旧产物（Delete+Move 窗口期会让播放 404）
-        if (_bySource.TryGetValue(key, out var token)
-            && _jobs.TryGetValue(token, out var live) && live.State != JobState.Failed)
+        // 源文件指纹（路径|大小|mtime）作去重键：源被替换 → 指纹变 → 不误复用旧任务
+        var key = CacheKey.For(sourcePath);
+        if (await TryReuseExistingAsync(key) is { } live)
         {
             LatestUrl = UrlFor(live);
             return live;
         }
 
-        // 在途去重：先查后建的窗口期里并发提交同一文件 → 共享同一个任务
-        var task = _submitting.GetOrAdd(key, _ => SubmitCoreAsync(sourcePath, ct));
+        // 在途去重：先查后建的窗口期里并发提交同一文件 → 共享同一个任务。
+        // GetOrAdd 的工厂本身可并发执行多次，若直接在工厂里启动异步任务，落选任务
+        // 仍会继续跑（多个 ffmpeg 写同一临时产物）。用 Lazy<Task> 包住工厂：
+        // 只有胜出的 Lazy 会被访问 Value，落选者连工厂都不会运行。
+        var lazy = _submitting.GetOrAdd(key, _ => new Lazy<Task<MediaJob>>(
+            () => SubmitCoreAsync(sourcePath, ct), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            return await task;
+            return await lazy.Value;
         }
         finally
         {
-            _submitting.TryRemove(KeyValuePair.Create(key, task));
+            _submitting.TryRemove(KeyValuePair.Create(key, lazy));
         }
+    }
+
+    /// <summary>同源复用核对：指纹命中后还要比对策略变体。
+    /// 运行期修改 transcode 配置（auto↔always 等）→ 变体不同 → 不复用旧 job，立即重转。</summary>
+    private async Task<MediaJob?> TryReuseExistingAsync(string key)
+    {
+        if (_bySource.TryGetValue(key, out var token)
+            && _jobs.TryGetValue(token, out var live) && live.State != JobState.Failed)
+        {
+            var policy = PuConfig.TranscodePolicy;
+            // 只有 ForceGpu + 有视频的变体才依赖编码器目录（lazy，探测一次后缓存）；其余纯配置判定
+            var want = policy == TranscodePolicy.ForceGpu && live.HasVideo
+                ? $"gpu:{(await Catalog.Value).PreferredH264Encoder};fmt:{TranscodePlan.FormatVersion}"
+                : $"fmt:{TranscodePlan.FormatVersion}";
+            if (live.Variant == want)
+                return live;
+        }
+        return null;
     }
 
     private async Task<MediaJob> SubmitCoreAsync(string sourcePath, CancellationToken ct)
@@ -239,9 +284,7 @@ public sealed class SessionServer : IAsyncDisposable
 
         var passthrough = plan.Kind == PlanKind.ServeOriginal;
         // 产物变体 = 转码策略 + 产物格式版本（旧参数产出的缓存自动失效重转）
-        var variant = policy == TranscodePolicy.ForceGpu && info.Video is not null
-            ? $"gpu:{catalog!.PreferredH264Encoder};fmt:{TranscodePlan.FormatVersion}"
-            : $"fmt:{TranscodePlan.FormatVersion}";
+        var variant = VariantFor(policy, info.Video is not null, catalog ?? EncoderCatalog.SoftwareOnly);
 
         // 产物落点：直出用源文件；命中复用直接播；否则就地（.pu\ 子目录）或中央缓存生产
         string artifact;
@@ -279,38 +322,72 @@ public sealed class SessionServer : IAsyncDisposable
             ContentType = contentType,
             PlanExplanation = plan.Explanation,
             IsHls = !passthrough && plan.Hls,
+            Variant = variant,
+            HasVideo = info.Video is not null,
         };
         _jobs[job.Token] = job;
-        _bySource[Path.GetFullPath(sourcePath)] = job.Token;
+        _bySource[CacheKey.For(sourcePath)] = job.Token;
         LatestUrl = UrlFor(job);
 
         if (target is null)
         {
             // 零处理 / 复用命中：字幕后台抽取（大文件多条字幕要完整读一遍源文件，
             // 不阻塞提交——窗口立刻有内容，抽完自动置可播）。
-            // 直出路径的字幕落中央缓存（{key}\subs\），不再往源视频目录写 subs\ 垃圾。
+            // 字幕按源文件身份隔离，防止同目录多集互相覆盖：
+            //   直出           → 中央缓存 {key}\subs（不往源目录写垃圾）
+            //   中央缓存命中   → {缓存key}\subs（key 含源指纹，天然隔离）
+            //   就地产物命中   → .pu\{指纹}\subs（指纹 = 路径|大小|mtime；.pu 目录从产物路径反推，
+            //                    不依赖 artifactDir —— HLS 的 artifactDir 是产物目录本身）
             var subsRoot = passthrough
                 ? CacheKey.ArtifactDirFor(sourcePath)
-                : artifactDir;
-            _ = ExtractSubsAndServeAsync(job, sourcePath, info, subsRoot, ct);
+                : ArtifactLocator.SidecarDirOf(artifact) is { } sd
+                    ? Path.Combine(sd, CacheKey.For(sourcePath))
+                    : CacheManager.EntryDirFor(artifact) is { } entry
+                        ? entry // 中央缓存命中：{缓存key}，与生产路径（target.WorkDir）一致
+                        : artifactDir;
+            _ = Track(job.Token, ExtractSubsAndServeAsync(job, sourcePath, info, subsRoot, _lifetime.Token));
         }
         else
         {
             Interlocked.Increment(ref _activeJobs);
-            _ = RunJobAsync(job, sourcePath, info, plan, target, variant, ct);
+            _ = Track(job.Token, RunJobAsync(job, sourcePath, info, plan, target, variant, _lifetime.Token));
         }
-        var serving = ServingEntryDirs();
-        CacheManager.MaybeEvict(skipEntry: serving.Contains);
+        var protectedDirs = ProtectedEntryDirs();
+        CacheManager.MaybeEvict(skipEntry: protectedDirs.Contains);
         return job;
     }
 
-    /// <summary>正在播放的中央缓存条目：LRU 淘汰时跳过，防止播到一半被删。</summary>
-    private HashSet<string> ServingEntryDirs()
+    /// <summary>产物变体 = 转码策略|编码器|格式版本（旧参数/旧策略产出的缓存自动失效重转）。</summary>
+    private static string VariantFor(TranscodePolicy policy, bool hasVideo, EncoderCatalog catalog)
+        => policy == TranscodePolicy.ForceGpu && hasVideo
+            ? $"gpu:{catalog.PreferredH264Encoder};fmt:{TranscodePlan.FormatVersion}"
+            : $"fmt:{TranscodePlan.FormatVersion}";
+
+    /// <summary>登记后台任务，供 StopAsync 取消后等待退出；完成即自动移除。
+    /// 移除登记统一由 Track 管理：任务在登记前就已启动，无字幕路径可以同步完成并
+    /// 先执行自身的 TryRemove——若由任务在 finally 里移除，会早于登记写入，
+    /// 已完成任务便永久留在登记表。续延挂在登记之后，不存在“先移除后登记”的窗口。</summary>
+    private Task Track(string key, Task task)
+    {
+        _background[key] = task;
+        // 已同步完成的任务：ExecuteSynchronously 让续延立即执行，登记后马上清掉
+        _ = task.ContinueWith(t => _background.TryRemove(key, out _),
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return task;
+    }
+
+    /// <summary>需要 LRU 保护的中央缓存条目：转码中（.tmp 写入中）与最近窗口内有传输的条目。
+    /// 已就绪且长时间无播放的条目放行给 LRU——否则文件夹会话打开过的每一集都永久占住 20GB。</summary>
+    internal HashSet<string> ProtectedEntryDirs()
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow.Ticks;
         foreach (var job in _jobs.Values)
         {
-            if (job.State != JobState.Serving) continue;
+            if (job.State == JobState.Failed) continue;
+            var recentlyPlayed = _lastTransfer.TryGetValue(job.Token, out var last)
+                && now - last <= TransferProtectWindow.Ticks;
+            if (job.State != JobState.Transcoding && !recentlyPlayed) continue;
             if (CacheManager.EntryDirFor(job.ArtifactPath) is { } entry)
                 set.Add(entry);
         }
@@ -322,7 +399,7 @@ public sealed class SessionServer : IAsyncDisposable
         => _jobs.TryGetValue(token, out var job) ? job.State : null;
 
     /// <summary>直出/复用命中：后台抽字幕，完成后置可播（抽字幕失败只丢字幕，不拖垮视频）。</summary>
-    private static async Task ExtractSubsAndServeAsync(
+    private async Task ExtractSubsAndServeAsync(
         MediaJob job, string sourcePath, MediaInfo info, string subsRoot, CancellationToken ct)
     {
         try
@@ -338,6 +415,7 @@ public sealed class SessionServer : IAsyncDisposable
         {
             job.SetFailed(ex.Message);
         }
+        // 从登记表移除统一由 Track 的完成续延负责（见 Track）
     }
 
     /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
@@ -358,23 +436,22 @@ public sealed class SessionServer : IAsyncDisposable
         return folder;
     }
 
-    /// <summary>点开文件夹里的一个文件 → 创建（或复用）媒体任务，返回 job（URL 用 UrlFor 拼）。</summary>
+    /// <summary>点开文件夹里的一个文件 → 创建（或复用）媒体任务，返回 job（URL 用 UrlFor 拼）。
+    /// 指纹/策略变体的复用核对统一交给 SubmitAsync，这里只做并发在途去重。</summary>
     public async Task<MediaJob> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
     {
-        if (folder.OpenedToken(index) is { } existing && _jobs.TryGetValue(existing, out var existingJob)
-            && existingJob.State != JobState.Failed)
-            return existingJob; // 复用，避免重复转码
-
-        // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次
+        // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次。
+        // 同 SubmitAsync：Lazy 包工厂，落选的并发提交不会启动多余探测
         var key = $"{folder.Token}:{index}";
-        var task = _opening.GetOrAdd(key, _ => OpenFolderFileCoreAsync(folder, index, ct));
+        var lazy = _opening.GetOrAdd(key, _ => new Lazy<Task<MediaJob>>(
+            () => OpenFolderFileCoreAsync(folder, index, ct), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            return await task;
+            return await lazy.Value;
         }
         finally
         {
-            _opening.TryRemove(KeyValuePair.Create(key, task));
+            _opening.TryRemove(KeyValuePair.Create(key, lazy));
         }
     }
 
@@ -420,8 +497,9 @@ public sealed class SessionServer : IAsyncDisposable
                 ? Path.Combine(target.TempPath, "index.m3u8")
                 : target.TempPath;
             var transcode = Transcoder.TranscodeAsync(sourcePath, plan, outputPath, info.DurationUs, progress, ct);
-            // 字幕抽取失败不连坐视频：视频照常可播，只是没有字幕
-            var subs = ExtractSubsSafeAsync(sourcePath, info, target.WorkDir, ct);
+            // 字幕抽取失败不连坐视频：视频照常可播，只是没有字幕。
+            // 字幕目录按源文件指纹隔离（.pu/{指纹} 或中央 {key}），同目录多集互不覆盖
+            var subs = ExtractSubsSafeAsync(sourcePath, info, SubsRootFor(target, sourcePath), ct);
             await Task.WhenAll(transcode, subs);
             if (plan.Hls)
             {
@@ -446,30 +524,46 @@ public sealed class SessionServer : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            // 服务关闭取消：清掉半截临时产物，不让 ffmpeg 残留继续占缓存
+            TryCleanTemp(plan, target);
             job.SetFailed("已取消");
         }
         catch (Exception ex)
         {
             // 转码成功但落位失败（如旧产物被播放器占用）等：清掉临时产物，防残留
-            try
-            {
-                if (plan.Hls)
-                {
-                    if (Directory.Exists(target.TempPath))
-                        Directory.Delete(target.TempPath, recursive: true);
-                }
-                else if (File.Exists(target.TempPath))
-                {
-                    File.Delete(target.TempPath);
-                }
-            }
-            catch { /* 尽力而为 */ }
+            TryCleanTemp(plan, target);
             job.SetFailed(ex.Message);
         }
         finally
         {
             Interlocked.Decrement(ref _activeJobs);
+            // 从登记表移除统一由 Track 的完成续延负责（见 Track）
         }
+    }
+
+    /// <summary>字幕工作目录：按源文件指纹隔离（.pu/{指纹} 或中央 {key}/subs），
+    /// 同一目录多集视频不共用 subs/，避免打开下一集覆盖上一集仍在播的字幕。</summary>
+    private static string SubsRootFor(ArtifactTarget target, string sourcePath)
+        => target.Sidecar
+            ? Path.Combine(target.WorkDir, CacheKey.For(sourcePath))
+            : target.WorkDir;
+
+    /// <summary>尽力清理临时产物：HLS 删临时整目录，其余删 .tmp 文件。</summary>
+    private static void TryCleanTemp(TranscodePlan plan, ArtifactTarget target)
+    {
+        try
+        {
+            if (plan.Hls)
+            {
+                if (Directory.Exists(target.TempPath))
+                    Directory.Delete(target.TempPath, recursive: true);
+            }
+            else if (File.Exists(target.TempPath))
+            {
+                File.Delete(target.TempPath);
+            }
+        }
+        catch { /* 尽力而为 */ }
     }
 
     /// <summary>抽字幕；失败只丢字幕（返回空表），不抛异常拖垮视频本身。</summary>
@@ -560,6 +654,29 @@ public sealed class SessionServer : IAsyncDisposable
         throw new InvalidOperationException($"端口 {preferred}–{preferred + 31} 均被占用");
     }
 
-    public Task StopAsync() => _app.StopAsync();
-    public ValueTask DisposeAsync() => _app.DisposeAsync();
+    /// <summary>停止服务：先取消生命周期令牌（ffmpeg 转码/抽字幕随之终止），
+    /// 等待全部后台任务退出后再停 Kestrel——关闭时不留继续写缓存的 ffmpeg 进程。
+    /// 幂等：重复调用（含 DisposeAsync 的隐式调用）安全。</summary>
+    public async Task StopAsync()
+    {
+        try { _lifetime.Cancel(); } catch (ObjectDisposedException) { } // 已 Dispose 过：取消无意义，继续等待
+        // 循环取快照：取消时刻仍有提交在途时，新登记的后台任务可能落在第一轮快照之后；
+        // 所有后台任务都以生命周期令牌为取消源，取消后必然快速退出，循环必然收敛。
+        while (true)
+        {
+            var pending = _background.Values.ToArray();
+            if (pending.Length == 0) break;
+            try { await Task.WhenAll(pending); } catch { /* 任务内部均已捕获异常 */ }
+        }
+        await _app.StopAsync();
+    }
+
+    /// <summary>释放：与 StopAsync 同一套取消+等待逻辑（Kestrel 停止幂等），
+    /// 未显式 StopAsync 的 await using 退出路径同样不会遗留运行中的 ffmpeg。</summary>
+    public async ValueTask DisposeAsync()
+    {
+        await StopAsync();
+        _lifetime.Dispose();
+        await _app.DisposeAsync();
+    }
 }

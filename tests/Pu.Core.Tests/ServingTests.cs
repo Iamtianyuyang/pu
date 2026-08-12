@@ -240,6 +240,102 @@ public class ServingTests
     }
 
     [Fact]
+    public async Task 转码中的中央缓存条目_受LRU保护_就绪无传输不保护()
+    {
+        var cacheRoot = Path.Combine(TestEnv.NewTestDir(), "cache");
+        var old = Environment.GetEnvironmentVariable("PU_CACHE_DIR");
+        Environment.SetEnvironmentVariable("PU_CACHE_DIR", cacheRoot);
+        try
+        {
+            await using var server = await SessionServer.StartAsync(preferredPort: 18912);
+            var entry = Path.Combine(cacheRoot, "abcdef");
+            Directory.CreateDirectory(Path.Combine(entry, "out.mp4.hls.tmp")); // 生产中的临时目录
+            var job = new MediaJob
+            {
+                Token = "p1",
+                SourcePath = "x.mkv",
+                Title = "x",
+                SourceDescription = "d",
+                ArtifactPath = Path.Combine(entry, "out.mp4.hls", "index.m3u8"),
+                ContentType = "video/mp4",
+                PlanExplanation = "e",
+                IsHls = true,
+            }; // 不 SetServing → 保持 Transcoding
+            server.Register(job);
+
+            // 转码中（.tmp 正在写入）的条目必须受保护，不能被 LRU 删
+            Assert.Contains(entry, server.ProtectedEntryDirs());
+
+            // 就绪且从未播放 → 放行给 LRU（文件夹会话看过的每一集不能永久占住 20GB）
+            job.SetServing([]);
+            Assert.DoesNotContain(entry, server.ProtectedEntryDirs());
+
+            // 传输（播放中）→ 窗口内保护
+            server.BeginTransfer(job.Token);
+            Assert.Contains(entry, server.ProtectedEntryDirs());
+
+            // 窗口过期后放行（模拟播放停止一段时间）
+            var oldWindow = SessionServer.TransferProtectWindow;
+            SessionServer.TransferProtectWindow = TimeSpan.Zero;
+            try
+            {
+                Assert.DoesNotContain(entry, server.ProtectedEntryDirs());
+            }
+            finally
+            {
+                SessionServer.TransferProtectWindow = oldWindow;
+            }
+
+            // 失败任务永不保护
+            job.SetFailed("boom");
+            Assert.DoesNotContain(entry, server.ProtectedEntryDirs());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PU_CACHE_DIR", old);
+        }
+    }
+
+    [Fact]
+    public async Task HLS分片路由_只提供播放列表与分片_清单不外泄()
+    {
+        using var dir = new TempDir();
+        var hlsDir = Path.Combine(dir.Path, "out.mp4.hls");
+        Directory.CreateDirectory(hlsDir);
+        File.WriteAllText(Path.Combine(hlsDir, "index.m3u8"), "#EXTM3U\nseg_00001.ts\n");
+        File.WriteAllText(Path.Combine(hlsDir, "seg_00001.ts"), "ts-data");
+        // 复用清单（历史版本含源路径）：绝不能通过 /hls/ 下载
+        File.WriteAllText(Path.Combine(hlsDir, "index.m3u8.json"),
+            "{\"SourcePath\":\"D:\\\\secret\\\\movie.mkv\"}");
+        var job = new MediaJob
+        {
+            Token = "hls1",
+            SourcePath = "x.mkv",
+            Title = "x",
+            SourceDescription = "d",
+            ArtifactPath = Path.Combine(hlsDir, "index.m3u8"),
+            ContentType = "application/vnd.apple.mpegurl",
+            PlanExplanation = "e",
+            IsHls = true,
+        };
+        job.SetServing([]);
+        await using var server = await SessionServer.StartAsync(preferredPort: 18913);
+        server.Register(job);
+
+        using var client = new HttpClient();
+        // 播放列表与 TS 分片正常提供
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/hls/index.m3u8")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/hls/seg_00001.ts")).StatusCode);
+        // 清单 / 其它扩展名一律 404，路径不泄露
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/hls/index.m3u8.json")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync($"http://localhost:{server.Port}/s/{job.Token}/hls/evil.txt")).StatusCode);
+    }
+
+    [Fact]
     public async Task 端口被占_向上探测()
     {
         using var dir = new TempDir();

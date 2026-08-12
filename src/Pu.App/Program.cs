@@ -95,9 +95,10 @@ public static class Program
                 {
                     try
                     {
-                        var job = await server.OpenFolderFileAsync(folder, index, CancellationToken.None);
+                        // 用服务生命周期令牌：客户端断开不取消，但服务停止时随 StopAsync 统一取消
+                        var job = await server.OpenFolderFileAsync(folder, index, server.ShutdownToken);
                         WireJob(job, window); // 进度更新驱动窗口
-                        window.SetJob(job);
+                        window.ActivateJob(job);
                     }
                     catch (Exception ex)
                     {
@@ -119,6 +120,10 @@ public static class Program
             {
                 url = await HandleIncomingAsync(server, window, input, cts.Token);
             }
+            catch (OperationCanceledException)
+            {
+                // 窗口关闭/空闲超时触发的取消：不是处理失败，静默
+            }
             catch (Exception ex)
             {
                 Log.Error($"处理 {input} 失败: {ex.Message}");
@@ -133,6 +138,10 @@ public static class Program
                         window.ShowBusy(path);
                         window.ShowWindow();
                         await HandleIncomingAsync(server, window, path, cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // 服务关闭中：循环即将退出，静默
                     }
                     catch (Exception ex)
                     {
@@ -188,7 +197,7 @@ public static class Program
         Log.Info($"计划: {job.PlanExplanation}");
         Log.Info($"状态页: {server.UrlFor(job)}");
         WireJob(job, window); // 只订阅一次（文件夹复用同一 job 时不重复订阅/重复刷新）
-        window.SetJob(job);
+        window.ActivateJob(job);
         return server.UrlFor(job);
     }
 
@@ -335,9 +344,9 @@ public static class Program
 
     private static void UnregisterShell()
     {
-        var exts = ShellConfig.Load();
-        ShellRegister.Unregister(exts);
-        Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
+        // 枚举 SystemFileAssociations 下全部扩展名：配置里删掉的旧扩展名也一并注销
+        ShellRegister.Unregister();
+        Console.WriteLine("已移除右键菜单（全部扩展名 + 文件夹）。");
     }
 
     private static void InstallSelf()
@@ -357,6 +366,24 @@ public static class Program
             Console.WriteLine($"已是最新安装（{dest}）");
         }
 
+        // 全自带版：ffmpeg\ 目录一并复制。运行时只找新 exe 旁的 ffmpeg，
+        // 只拷 pu.exe 的话 full zip 用户安装后就找不到 ffmpeg，零依赖版反而无法播放
+        var srcFfmpeg = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
+        var destFfmpeg = Path.Combine(destDir, "ffmpeg");
+        if (Directory.Exists(srcFfmpeg))
+        {
+            if (!string.Equals(Path.GetFullPath(srcFfmpeg), Path.GetFullPath(destFfmpeg),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                CopyDirectory(srcFfmpeg, destFfmpeg);
+                Console.WriteLine($"已复制 ffmpeg → {destFfmpeg}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("未发现自带 ffmpeg（非全自带版，继续按 PATH/配置定位）。");
+        }
+
         var exts = ShellConfig.Load();
         ShellRegister.Register(exts, dest);
         Console.WriteLine($"已注册右键菜单：{exts.Count} 个扩展名 + 文件夹（HKCU，无需管理员）。");
@@ -365,9 +392,9 @@ public static class Program
 
     private static void UninstallSelf()
     {
-        var exts = ShellConfig.Load();
-        ShellRegister.Unregister(exts);
-        Console.WriteLine($"已移除右键菜单（{exts.Count} 个扩展名 + 文件夹）。");
+        // 枚举全部扩展名注销：配置里已删掉的旧扩展名也一并清掉，不留残键
+        ShellRegister.Unregister();
+        Console.WriteLine("已移除右键菜单（全部扩展名 + 文件夹）。");
 
         var destDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pu");
@@ -400,6 +427,17 @@ public static class Program
             Console.WriteLine($"pu.exe 被占用，请退出运行中的噗~噗噗~~噗噗噗噗~~~~后手动删除 {dest}");
         }
         try { File.Delete(Path.Combine(destDir, "extensions.json")); } catch { }
+        try { Directory.Delete(Path.Combine(destDir, "ffmpeg"), recursive: true); } catch { }
+    }
+
+    /// <summary>递归复制目录（保留相对结构，覆盖已有文件）。</summary>
+    private static void CopyDirectory(string srcDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+        foreach (var dir in Directory.GetDirectories(srcDir, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(destDir, Path.GetRelativePath(srcDir, dir)));
+        foreach (var file in Directory.GetFiles(srcDir, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(destDir, Path.GetRelativePath(srcDir, file)), overwrite: true);
     }
 
     /// <summary>命令模式下探测服务实例是否在跑（互斥体被持有）。</summary>

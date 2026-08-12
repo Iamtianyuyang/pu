@@ -28,12 +28,32 @@ public class LanAddressTests
     [Fact]
     public void 虚拟机HostOnly网卡_被跳过()
     {
+        // VirtualBox 带网关且排在最前：若不过滤会因网关优先被选中——
+        // 过滤生效时物理 WiFi 胜出，此测试真正证明了虚拟网卡被排除
         var vbox = If("VirtualBox Host-Only Network", "VirtualBox Host-Only Ethernet Adapter",
-            NetworkInterfaceType.Ethernet, OperationalStatus.Up, "192.168.56.1", null);
+            NetworkInterfaceType.Ethernet, OperationalStatus.Up, "192.168.56.1", "192.168.56.1");
         var wifi = If("WLAN", "Intel(R) Wi-Fi 6 AX201", NetworkInterfaceType.Wireless80211,
             OperationalStatus.Up, "192.168.1.9", "192.168.1.1");
 
         Assert.Equal("192.168.1.9", LanAddress.Pick([vbox, wifi])?.ToString());
+    }
+
+    [Fact]
+    public void 虚拟网卡关键词_大小写不敏感()
+    {
+        // Windows 网卡名大小写各异（VirtualBox / vEthernet / TAP-…），必须全部识别
+        var vbox = If("virtualbox host-only network", "VirtualBox Host-Only Ethernet Adapter",
+            NetworkInterfaceType.Ethernet, OperationalStatus.Up, "192.168.56.1", "192.168.56.1");
+        var vmware = If("VMware Network Adapter VMnet1", "VMware Virtual Ethernet Adapter for VMnet1",
+            NetworkInterfaceType.Ethernet, OperationalStatus.Up, "192.168.233.1", "192.168.233.1");
+        var vEth = If("vEthernet (Default Switch)", "Hyper-V Virtual Ethernet Adapter",
+            NetworkInterfaceType.Ethernet, OperationalStatus.Up, "172.16.0.1", "172.16.0.1");
+        var tap = If("TAP-Windows Adapter V9", "TAP-Windows Adapter V9", NetworkInterfaceType.Ethernet,
+            OperationalStatus.Up, "10.0.0.2", "10.0.0.2");
+        var wifi = If("WLAN", "Intel(R) Wi-Fi 6 AX201", NetworkInterfaceType.Wireless80211,
+            OperationalStatus.Up, "192.168.1.9", "192.168.1.1");
+
+        Assert.Equal("192.168.1.9", LanAddress.Pick([vbox, vmware, vEth, tap, wifi])?.ToString());
     }
 
     [Fact]

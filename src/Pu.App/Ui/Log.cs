@@ -5,6 +5,7 @@ public static class Log
 {
     private static readonly object Gate = new();
     private static volatile bool _console;
+    private static bool _dirReady;
 
     public static bool ConsoleOutput
     {
@@ -27,8 +28,21 @@ public static class Log
         }
         try
         {
-            lock (Gate) File.AppendAllText(FilePath, line + "\r\n");
+            lock (Gate)
+            {
+                EnsureDir();
+                File.AppendAllText(FilePath, line + "\r\n");
+            }
         }
         catch { /* 日志失败不影响主流程 */ }
+    }
+
+    /// <summary>确保 %LOCALAPPDATA%\Pu 存在：便携版全新机器上该目录可能从未创建，
+    /// AppendAllText 会静默失败，所有诊断日志丢失。创建失败不置位 → 下次重试。</summary>
+    private static void EnsureDir()
+    {
+        if (_dirReady) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+        _dirReady = true;
     }
 }
