@@ -12,7 +12,6 @@
 
 <p>
   <img src="https://badgen.net/github/release/Iamtianyuyang/pu?color=1e5aa8&label=版本" alt="版本">
-  <img src="https://img.shields.io/github/downloads/Iamtianyuyang/pu/total?color=1e5aa8&label=下载量" alt="下载量">
   <img src="https://img.shields.io/badge/Windows-10+-0078D6?logo=windows&logoColor=white" alt="Windows">
   <img src="https://badgen.net/github/license/Iamtianyuyang/pu?color=1e5aa8&label=许可证" alt="许可证">
   <img src="https://badgen.net/github/stars/Iamtianyuyang/pu?color=f1c40f&label=Stars" alt="Stars">
