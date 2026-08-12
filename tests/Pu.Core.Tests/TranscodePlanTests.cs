@@ -41,7 +41,7 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void H264_Mp4_但Moov在尾部_重封装为常规Mp4()
+    public void H264_Mp4_但Moov在尾部_重封装为Hls()
     {
         var plan = TranscodePlan.Create(Media("h264"), Nvenc, isFastStart: false);
         Assert.Equal(PlanKind.Remux, plan.Kind);

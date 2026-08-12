@@ -67,6 +67,41 @@ public class FolderServingTests
     }
 
     [Fact]
+    public async Task 文件夹重复提交_复用同一会话_列表刷新()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        CreateSampleMp4(dir.Path, "a.mp4");
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18926);
+        var folder1 = await server.SubmitFolderAsync(dir.Path);
+        Assert.Equal(1, folder1.Files.Count);
+
+        // 同一文件夹再提交 → 同一会话（token/URL 不变）；并发提交也只建一个
+        var folder2 = await server.SubmitFolderAsync(dir.Path);
+        Assert.Same(folder1, folder2);
+        var both = await Task.WhenAll(server.SubmitFolderAsync(dir.Path), server.SubmitFolderAsync(dir.Path));
+        Assert.Same(folder1, both[0]);
+        Assert.Same(folder1, both[1]);
+
+        // 新增文件后重新提交 → 列表刷新（新文件可见），仍复用同一会话
+        CreateSampleMp4(dir.Path, "b.mp4");
+        var folder3 = await server.SubmitFolderAsync(dir.Path);
+        Assert.Same(folder1, folder3);
+        Assert.Equal(2, folder3.Files.Count);
+        Assert.Contains(folder3.Files, f => f.Name == "b.mp4");
+    }
+
+    [Fact]
+    public async Task 提交不存在的文件_友好错误而非英文异常()
+    {
+        await using var server = await SessionServer.StartAsync(preferredPort: 18927);
+        var missing = Path.Combine(Path.GetTempPath(), $"pu-missing-{Guid.NewGuid():N}.mp4");
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => server.SubmitAsync(missing));
+        Assert.Contains("文件不存在或已被移动", ex.Message);
+    }
+
+    [Fact]
     public async Task 同源文件重复提交_复用同一Job不重复转码()
     {
         if (!TestEnv.HasFfmpeg) return;

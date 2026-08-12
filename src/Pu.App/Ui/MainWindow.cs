@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window, IDisposable
     private MediaJob? _job;
     private FolderJob? _folder;
     private FolderJob? _renderedFolder; // 已渲染行数据的文件夹：同一文件夹再显示时原地刷新，不重建列表
+    private IReadOnlyList<FolderFile>? _renderedFiles; // 渲染时的列表快照引用：列表被 Refresh 后引用不同 → 重建
     private bool _closeRequested;
     private bool _disposeRequested;
     private bool _allowClose;
@@ -349,13 +350,18 @@ public sealed partial class MainWindow : Window, IDisposable
         FolderFeedbackText.Text = folder.Files.Count == 0 ? "没有找到支持的媒体文件" : "选一个想看的文件";
 
         SetWindowStatus("文件夹", Accent);
-        // 同一文件夹再次显示（返回列表）：原地刷新状态徽标，滚动位置与行对象原样保留
-        if (ReferenceEquals(_renderedFolder, folder) && _folderRows.Count > 0)
+        // 同一文件夹再次显示（返回列表）：同一列表快照时原地刷新状态徽标，滚动位置与行对象原样保留。
+        // 会话复用后列表可能被 Refresh（新列表引用）：行数/内容都可能变，必须重建——
+        // 否则行数变短时 folder.Files[row.Index] 越界崩 UI，行数相同但内容变时显示旧文件名
+        if (ReferenceEquals(_renderedFolder, folder)
+            && ReferenceEquals(_renderedFiles, folder.Files)
+            && _folderRows.Count > 0)
         {
             UpdateFolderRows(folder);
             return;
         }
         _renderedFolder = folder;
+        _renderedFiles = folder.Files;
         _folderRows.Clear();
         foreach (var file in folder.Files)
         {

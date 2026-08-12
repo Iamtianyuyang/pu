@@ -44,6 +44,10 @@ public sealed class SessionServer : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
+    // 文件夹会话按完整路径去重：同一文件夹重复右键 → 复用同一会话并刷新列表（不随重复提交膨胀）
+    private readonly ConcurrentDictionary<string, string> _folderByPath = new(StringComparer.OrdinalIgnoreCase);
+    // 文件夹提交在途去重：并发提交同一文件夹只扫一遍（见 RegisterInFlight）
+    private readonly ConcurrentDictionary<string, Lazy<Task<FolderJob>>> _submittingFolders = new(StringComparer.OrdinalIgnoreCase);
     // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次（见 RegisterInFlight）
     private readonly ConcurrentDictionary<string, Lazy<Task<MediaJob>>> _opening = new(StringComparer.Ordinal);
     // 单文件模式同源去重：源文件指纹（路径|大小|mtime）→ job token。
@@ -223,6 +227,10 @@ public sealed class SessionServer : IAsyncDisposable
             // 播放中的媒体请求本身就 Touch，不受影响。
             if (job.State == JobState.Transcoding
                 || (job.SubtitlesPending && job.State != JobState.Failed)) server.Touch();
+            // 已定案的播放页保持 30s 低速心跳（页面 JS）：刷新最近传输时刻 →
+            // 页面开着时产物不被 LRU/Job 上限淘汰（暂停播放后恢复不 404）；
+            // BeginTransfer 不 Touch → 心跳不影响空闲退出
+            if (job.State == JobState.Serving) server.BeginTransfer(token);
             return Results.Json(server.ToDto(job), JobStatusJsonContext.Default.JobStatusDto);
         });
 
@@ -304,6 +312,9 @@ public sealed class SessionServer : IAsyncDisposable
         ThrowIfStopping();
         SweepStaleSources();
         EnforceJobCap();
+        // 文件可能在右键后/扫描后被删除或移动：先守卫，避免 CacheKey 抛英文 FileNotFoundException
+        if (!File.Exists(sourcePath))
+            throw new InvalidOperationException($"文件不存在或已被移动: {sourcePath}");
         // 源文件指纹（路径|大小|mtime）作去重键：源被替换 → 指纹变 → 不误复用旧任务
         var key = CacheKey.For(sourcePath);
         if (await TryReuseExistingAsync(key) is { } live)
@@ -571,22 +582,40 @@ public sealed class SessionServer : IAsyncDisposable
         // 从登记表移除统一由 Track 的完成续延负责（见 Track）
     }
 
-    /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。</summary>
+    /// <summary>文件夹模式：扫描媒体文件并注册列表会话（文件按需懒加载，不预转码）。
+    /// 同一文件夹重复提交 → 复用同一会话并刷新列表（新加的文件可见），_folders 不随重复提交膨胀。</summary>
     public async Task<FolderJob> SubmitFolderAsync(string folderPath, CancellationToken ct = default)
     {
         ThrowIfStopping();
-        var scan = await Task.Run(() => FolderScan.ScanDetailed(folderPath, MediaExtensions.Defaults), ct);
+        var key = Path.GetFullPath(folderPath);
+        // 在途去重 + 同路径复用（见 RegisterInFlight）：并发提交同一文件夹共享扫描，只建一个会话
+        var lazy = RegisterInFlight(_submittingFolders, key, () => SubmitFolderCoreAsync(key, _lifetime.Token));
+        return await lazy.Value.WaitAsync(ct);
+    }
+
+    private async Task<FolderJob> SubmitFolderCoreAsync(string fullPath, CancellationToken ct)
+    {
+        ThrowIfStopping();
+        var scan = await Task.Run(() => FolderScan.ScanDetailed(fullPath, MediaExtensions.Defaults), ct);
         if (scan.Files.Count == 0)
             throw new InvalidOperationException("文件夹里没有媒体文件");
+        // 同路径已有会话：刷新列表后复用（旧 token 的页面/二维码继续有效，URL 不变）
+        if (_folderByPath.TryGetValue(fullPath, out var token)
+            && _folders.TryGetValue(token, out var existing))
+        {
+            existing.Refresh(scan.Files, scan.Truncated);
+            LatestUrl = UrlForFolder(existing);
+            return existing;
+        }
         var folder = new FolderJob
         {
             Token = RandomNumberGenerator.GetHexString(32),
-            FolderPath = folderPath,
-            Title = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar)),
-            Files = scan.Files,
-            Truncated = scan.Truncated,
+            FolderPath = fullPath,
+            Title = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar)),
         };
+        folder.Refresh(scan.Files, scan.Truncated);
         _folders[folder.Token] = folder;
+        _folderByPath[fullPath] = folder.Token;
         LatestUrl = UrlForFolder(folder);
         return folder;
     }
