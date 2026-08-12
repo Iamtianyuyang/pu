@@ -9,6 +9,38 @@ namespace Pu.Core.Tests;
 public class SubtitleTests
 {
     [Fact]
+    public async Task 缺index的字幕流_直接跳过_不启动ffmpeg()
+    {
+        using var dir = new TempDir();
+        var sourcePath = Path.Combine(dir.Path, "movie.mkv");
+        File.WriteAllBytes(sourcePath, [1, 2, 3]);
+
+        var info = new MediaInfo
+        {
+            FileName = sourcePath,
+            FormatName = "matroska",
+            Streams = [new SubtitleStreamInfo(-1, "subrip", "chi", "")],
+        };
+        var result = await SubtitleExtractor.ExtractAsync(sourcePath, info, dir.Path);
+        Assert.Empty(result);
+        Assert.False(Directory.Exists(Path.Combine(dir.Path, "subs"))); // 没启动任何进程
+    }
+
+    [Fact]
+    public void ffprobe缺index的流_解析为负一_不做碰撞猜测()
+    {
+        var info = MediaProbe.Parse("""
+            {"streams":[
+              {"codec_type":"video","codec_name":"h264","index":0,"width":128,"height":72},
+              {"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"chi"}}
+            ]}
+            """, @"D:\x.mkv");
+        var sub = Assert.Single(info.Subtitles);
+        Assert.Equal(-1, sub.Index);       // 缺 index：标记为 -1，不拿 streams.Count 猜
+        Assert.Equal(0, info.Video!.Index); // 有 index 的流不受影响
+    }
+
+    [Fact]
     public async Task Vtt已存在_跳过抽取直接复用()
     {
         // 无需 ffmpeg：所有 VTT 已存在且 .meta 与源文件一致时不应启动任何进程

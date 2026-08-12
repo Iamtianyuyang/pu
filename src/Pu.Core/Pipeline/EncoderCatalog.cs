@@ -33,7 +33,7 @@ public sealed class EncoderCatalog
         ProcessResult result;
         try
         {
-            result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, ["-hide_banner", "-encoders"],
+            result = await ProcessRunner.RunAsync(FfmpegLocator.Exe, ["-hide_banner", "-nostdin", "-encoders"],
                 cancellationToken: ct, timeout: TimeSpan.FromSeconds(15));
         }
         catch (TimeoutException)
@@ -74,7 +74,7 @@ public sealed class EncoderCatalog
         try
         {
             var result = await ProcessRunner.RunAsync(FfmpegLocator.Exe,
-                ["-hide_banner", "-loglevel", "error",
+                ["-hide_banner", "-nostdin", "-loglevel", "error",
                  "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
                  "-frames:v", "8", "-pix_fmt", "yuv420p",
                  "-c:v", encoder, "-f", "null", "-"],

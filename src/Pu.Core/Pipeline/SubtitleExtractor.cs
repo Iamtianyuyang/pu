@@ -28,7 +28,9 @@ public static class SubtitleExtractor
     public static async Task<List<SubtitleFile>> ExtractAsync(
         string sourcePath, MediaInfo info, string artifactDir, CancellationToken ct = default)
     {
-        var targets = info.Subtitles.Where(s => Convertible.Contains(s.Codec)).ToList();
+        // 缺 index 的流（ffprobe 罕见省略）无法用 0:{index} 可靠映射，直接跳过，不硬猜
+        var targets = info.Subtitles
+            .Where(s => s.Index >= 0 && Convertible.Contains(s.Codec)).ToList();
         if (targets.Count == 0) return [];
 
         // 全部 VTT 已存在（缓存命中/上次已抽）且源文件未变 → 免 ffmpeg 直接复用。
@@ -60,7 +62,7 @@ public static class SubtitleExtractor
             var vtt = VttPathFor(artifactDir, s.Index);
             var r = await ProcessRunner.RunAsync(FfmpegLocator.Exe, new[]
             {
-                "-y", "-hide_banner", "-loglevel", "error",
+                "-y", "-hide_banner", "-loglevel", "error", "-nostdin",
                 "-i", sourcePath,
                 "-map", $"0:{s.Index}", // 绝对流序号
                 "-c:s", "webvtt",
@@ -77,7 +79,7 @@ public static class SubtitleExtractor
     private static async Task<List<SubtitleFile>?> ExtractSinglePassAsync(
         string sourcePath, List<SubtitleStreamInfo> targets, string artifactDir, CancellationToken ct)
     {
-        var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-i", sourcePath };
+        var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", sourcePath };
         foreach (var s in targets)
             args.AddRange(["-map", $"0:{s.Index}", "-c:s", "webvtt", VttPathFor(artifactDir, s.Index)]);
 

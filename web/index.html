@@ -281,7 +281,7 @@ video{width:100%;height:100%;display:block;outline:none}
           video.addEventListener('error', failPlay);
           playIt();
         }
-        // 兑底：8 秒还没起播条件就亮播放键（纯音频只收遮罩，不弹大按钮），让用户自己点
+        // 兜底：8 秒还没起播条件就亮播放键（纯音频只收遮罩，不弹大按钮），让用户自己点
         setTimeout(function(){
           if (video.readyState < 2 && !video.error
               && !loadingOverlay.classList.contains('hidden')){

@@ -211,7 +211,7 @@ public class TranscodePlanTests
     }
 
     [Fact]
-    public void 纯音频Mp3_封装为M4A_音频转AAC()
+    public void 纯音频Mp3_浏览器原生可解_直接直出()
     {
         var info = new MediaInfo
         {
@@ -220,9 +220,42 @@ public class TranscodePlanTests
             Streams = [new AudioStreamInfo(0, "mp3", 44100, 2)],
         };
         var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
+        Assert.Equal(PlanKind.ServeOriginal, plan.Kind);
+    }
+
+    [Fact]
+    public void 纯音频FlacWav_浏览器原生可解_直接直出()
+    {
+        var flac = new MediaInfo
+        {
+            FileName = "song.flac",
+            FormatName = "flac",
+            Streams = [new AudioStreamInfo(0, "flac", 44100, 2)],
+        };
+        Assert.Equal(PlanKind.ServeOriginal, TranscodePlan.Create(flac, Nvenc, isFastStart: true).Kind);
+
+        var wav = new MediaInfo
+        {
+            FileName = "song.wav",
+            FormatName = "wav",
+            Streams = [new AudioStreamInfo(0, "pcm_s16le", 44100, 2)],
+        };
+        Assert.Equal(PlanKind.ServeOriginal, TranscodePlan.Create(wav, Nvenc, isFastStart: true).Kind);
+    }
+
+    [Fact]
+    public void 纯音频Mp3码流在M4A容器_扩展名不符_不直出转AAC()
+    {
+        // 扩展名决定 Content-Type：m4a 容器里的 mp3 码流直出会拿到 audio/mp4，
+        // 浏览器可能解不了 → 保持原逻辑封装为 M4A 转 AAC
+        var info = new MediaInfo
+        {
+            FileName = "song.m4a",
+            FormatName = Mp4,
+            Streams = [new AudioStreamInfo(0, "mp3", 44100, 2)],
+        };
+        var plan = TranscodePlan.Create(info, Nvenc, isFastStart: false);
         Assert.Equal(PlanKind.Remux, plan.Kind);
-        Assert.Equal("m4a", plan.OutputExtension);
-        Assert.Contains("-map 0:a:0", Args(plan));
         Assert.Contains("-c:a aac", Args(plan));
     }
 

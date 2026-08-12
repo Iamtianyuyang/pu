@@ -12,6 +12,24 @@ public sealed record TranscodeProgress(double Fraction, TimeSpan Position, TimeS
 /// </summary>
 public static class Transcoder
 {
+    /// <summary>
+    /// 硬解/硬编失败的 stderr 特征串（不区分大小写）。命中才走兜底重试；
+    /// 输出侧错误（磁盘满 "No space left on device"、坏文件 "Invalid data found when processing input"、
+    /// 容器/参数错误）不命中 → 立即报错——原逻辑对这类错误也会整轮重跑 2 次，
+    /// 磁盘满时白白多编两遍全片才报错。
+    /// 看门狗超时（ExitCode == -1，进程无进展被终止）也算硬件相关：卡死常由驱动问题引起，
+    /// README 承诺的「卡死 → 硬解/硬编兜底」路径保持生效。
+    /// </summary>
+    private static readonly string[] HwFailureMarkers =
+    [
+        "cuda", "cuvid", "nvenc", "qsv", "mfx", "amf", "d3d11", "vaapi", "vdpau", "dxva",
+        "hwaccel", "hardware", "driver", "cannot load", "initialization failed", "failed to initialize",
+    ];
+
+    private static bool IsHwFailure(ProcessResult result)
+        => result.ExitCode == -1 // 看门狗超时：可能由驱动问题引起，保留兜底路径
+        || HwFailureMarkers.Any(m => result.StdErr.Contains(m, StringComparison.OrdinalIgnoreCase));
+
     public static async Task TranscodeAsync(
         string input,
         TranscodePlan plan,
@@ -22,14 +40,14 @@ public static class Transcoder
     {
         var result = await RunFfmpegAsync(input, plan.EffectiveInputArgs, plan.OutputArgs,
             outputPath, plan, totalDurationUs, progress, ct);
-        if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0)
+        if (result.ExitCode != 0 && plan.EffectiveInputArgs.Length > 0 && IsHwFailure(result))
         {
             // 硬件解码失败（驱动/格式不支持）→ 清掉首轮残留分片/半截文件，纯软件解码重试一次
             CleanupArtifact(outputPath, plan);
             result = await RunFfmpegAsync(input, [], plan.OutputArgs,
                 outputPath, plan, totalDurationUs, progress, ct);
         }
-        if (result.ExitCode != 0 && plan.EncoderName is { } enc && enc != "libx264")
+        if (result.ExitCode != 0 && plan.EncoderName is { } enc && enc != "libx264" && IsHwFailure(result))
         {
             // 硬件编码器本身失败（驱动崩溃/分辨率超限）→ 清残片，libx264 软编兜底一次
             CleanupArtifact(outputPath, plan);
@@ -73,7 +91,7 @@ public static class Transcoder
         TranscodePlan plan, long totalDurationUs,
         IProgress<TranscodeProgress>? progress, CancellationToken ct)
     {
-        var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-nostats" };
+        var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-nostdin" };
         args.AddRange(inputArgs);
         args.Add("-i");
         args.Add(input);

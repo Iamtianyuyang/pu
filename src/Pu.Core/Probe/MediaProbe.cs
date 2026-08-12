@@ -62,7 +62,9 @@ public static class MediaProbe
             {
                 var type = GetString(s, "codec_type") ?? "";
                 var codec = GetString(s, "codec_name") ?? "";
-                var index = s.TryGetProperty("index", out var idx) && idx.TryGetInt32(out var i) ? i : streams.Count;
+                // index 缺失（ffprobe 罕见省略）用 -1 标记：调用方（字幕抽取等）直接跳过，
+                // 不做可能碰撞的猜测（旧逻辑用 streams.Count 兜底，可能与真实 index 撞车）
+                var index = s.TryGetProperty("index", out var idx) && idx.TryGetInt32(out var i) ? i : -1;
                 switch (type)
                 {
                     case "video":

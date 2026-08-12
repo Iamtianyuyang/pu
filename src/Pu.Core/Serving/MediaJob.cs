@@ -37,6 +37,9 @@ public sealed class MediaJob
     /// <summary>源文件是否有视频流（复用核对时算“当前策略变体”用，免重复探测）。</summary>
     public bool HasVideo { get; init; }
 
+    /// <summary>job 创建时刻（_jobs 上限淘汰最老定案 job 用）。</summary>
+    public long CreatedTicks { get; init; } = DateTime.UtcNow.Ticks;
+
     public JobState State { get { lock (_gate) return _state; } }
     public double Progress { get { lock (_gate) return _progress; } }
     public string? Error { get { lock (_gate) return _error; } }

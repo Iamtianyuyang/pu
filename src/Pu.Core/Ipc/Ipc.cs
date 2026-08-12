@@ -14,17 +14,37 @@ public static class IpcHub
 
     public static async Task ServeAsync(Channel<string> inbox, CancellationToken ct = default)
     {
+        var pipeBusyBackoffMs = 0;
         while (!ct.IsCancellationRequested)
         {
+            NamedPipeServerStream pipe;
             try
             {
-                await using var pipe = new NamedPipeServerStream(
+                pipe = new NamedPipeServerStream(
                     PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                await pipe.WaitForConnectionAsync(ct);
-                using var reader = new StreamReader(pipe, Encoding.UTF8);
-                var line = await reader.ReadLineAsync(ct);
-                if (!string.IsNullOrWhiteSpace(line))
-                    await inbox.Writer.WriteAsync(line, ct);
+                pipeBusyBackoffMs = 0; // 创建成功：管道归本进程，复位退避
+            }
+            catch (IOException)
+            {
+                // 管道已被其它实例占用（如快速用户切换的另一个会话也起了 pu~）：
+                // 单实例管道创建即失败会立刻重进循环——必须退避，否则变成紧循环空转。
+                // 正常单实例场景不会走到这里（崩溃进程的管道由 OS 自动回收）。
+                pipeBusyBackoffMs = pipeBusyBackoffMs == 0 ? 500 : Math.Min(pipeBusyBackoffMs * 2, 5000);
+                try { await Task.Delay(pipeBusyBackoffMs, ct); }
+                catch (OperationCanceledException) { return; }
+                continue;
+            }
+
+            try
+            {
+                await using (pipe)
+                {
+                    await pipe.WaitForConnectionAsync(ct);
+                    using var reader = new StreamReader(pipe, Encoding.UTF8);
+                    var line = await reader.ReadLineAsync(ct);
+                    if (!string.IsNullOrWhiteSpace(line))
+                        await inbox.Writer.WriteAsync(line, ct);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -32,7 +52,7 @@ public static class IpcHub
             }
             catch (IOException)
             {
-                // 客户端异常断开 → 重开监听
+                // 客户端异常断开 → 重开监听（管道已创建成功，无需退避）
             }
         }
     }

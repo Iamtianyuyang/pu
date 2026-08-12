@@ -14,6 +14,13 @@ public static class ContentTypes
         ".m4a" => "audio/mp4",
         ".mp3" => "audio/mpeg",
         ".aac" => "audio/aac",
+        ".flac" => "audio/flac",
+        ".wav" => "audio/wav",
+        ".ogg" => "audio/ogg",
+        ".opus" => "audio/ogg",
+        ".wma" => "audio/x-ms-wma",
+        ".ac3" => "audio/ac3",
+        ".dts" => "audio/vnd.dts",
         _ => "application/octet-stream",
     };
 }

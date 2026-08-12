@@ -44,14 +44,12 @@ public sealed class SessionServer : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, MediaJob> _jobs = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FolderJob> _folders = new(StringComparer.Ordinal);
-    // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次。
-    // 用 Lazy 包任务工厂：GetOrAdd 的工厂本身可能并发执行多次，但只有胜出的
-    // Lazy 会被访问 Value——落选 Lazy 的工厂永远不会运行，不会启动多余探测/转码
+    // 文件夹文件“正在打开”的在途任务：并发双击同一文件只转一次（见 RegisterInFlight）
     private readonly ConcurrentDictionary<string, Lazy<Task<MediaJob>>> _opening = new(StringComparer.Ordinal);
     // 单文件模式同源去重：源文件指纹（路径|大小|mtime）→ job token。
     // 指纹或策略变体任一变化（源被替换 / 运行期改 transcode 配置）→ 不复用，重新生产
     private readonly ConcurrentDictionary<string, string> _bySource = new(StringComparer.OrdinalIgnoreCase);
-    // 同源提交的在途去重：并发提交同一文件只跑一次探测/注册（Lazy 保证工厂只执行一次）
+    // 同源提交的在途去重：并发提交同一文件只跑一次探测/注册（见 RegisterInFlight）
     private readonly ConcurrentDictionary<string, Lazy<Task<MediaJob>>> _submitting = new(StringComparer.OrdinalIgnoreCase);
     // 后台任务登记（转码/抽字幕）：StopAsync 取消后逐个等待退出，防止关闭时 ffmpeg 仍在写缓存
     private readonly ConcurrentDictionary<string, Task> _background = new(StringComparer.Ordinal);
@@ -305,6 +303,7 @@ public sealed class SessionServer : IAsyncDisposable
     {
         ThrowIfStopping();
         SweepStaleSources();
+        EnforceJobCap();
         // 源文件指纹（路径|大小|mtime）作去重键：源被替换 → 指纹变 → 不误复用旧任务
         var key = CacheKey.For(sourcePath);
         if (await TryReuseExistingAsync(key) is { } live)
@@ -313,20 +312,12 @@ public sealed class SessionServer : IAsyncDisposable
             return live;
         }
 
-        // 在途去重：先查后建的窗口期里并发提交同一文件 → 共享同一个任务。
-        // GetOrAdd 的工厂本身可并发执行多次，若直接在工厂里启动异步任务，落选任务
-        // 仍会继续跑（多个 ffmpeg 写同一临时产物）。用 Lazy<Task> 包住工厂：
-        // 只有胜出的 Lazy 会被访问 Value，落选者连工厂都不会运行。
-        var lazy = _submitting.GetOrAdd(key, _ => new Lazy<Task<MediaJob>>(
-            () => SubmitCoreAsync(sourcePath, ct), LazyThreadSafetyMode.ExecutionAndPublication));
-        try
-        {
-            return await lazy.Value;
-        }
-        finally
-        {
-            _submitting.TryRemove(KeyValuePair.Create(key, lazy));
-        }
+        // 在途去重：先查后建的窗口期里并发提交同一文件 → 共享同一个任务（见 RegisterInFlight）。
+        // 工厂统一用服务生命周期令牌：共享任务不被某个调用方取消连坐——首调用者取消后，
+        // 第二个提交者不能拿到已取消的任务；调用方取消只终止本次等待（WaitAsync），
+        // 任务本身继续跑，产物照常落位，后续提交走复用。
+        var lazy = RegisterInFlight(_submitting, key, () => SubmitCoreAsync(sourcePath, _lifetime.Token));
+        return await lazy.Value.WaitAsync(ct);
     }
 
     /// <summary>同源复用核对：指纹命中后还要比对策略变体。
@@ -460,7 +451,7 @@ public sealed class SessionServer : IAsyncDisposable
     /// <summary>清理已定案的源指纹条目，防长驻进程 _bySource 无限膨胀：
     /// 失败任务立即移除（重提交可重建）；可播且超过传输保护窗口的移除（重提交走产物复用，不重转码）。
     /// 从未被打开过的可播任务保留——二维码可能还在用户手里。
-    /// _jobs 本身按设计保留：旧 token 的页面/二维码仍需可访问。</summary>
+    /// _jobs 本身按设计保留（旧 token 的页面/二维码仍需可访问），但受 EnforceJobCap 上限约束。</summary>
     private void SweepStaleSources()
     {
         var cutoff = DateTime.UtcNow.Ticks - TransferProtectWindow.Ticks;
@@ -477,6 +468,56 @@ public sealed class SessionServer : IAsyncDisposable
                 && _lastTransfer.TryGetValue(token, out var last)
                 && last < cutoff)
                 _bySource.TryRemove(key, out _);
+        }
+    }
+
+    /// <summary>在途任务登记：工厂只执行一次（并发提交共享同一任务），登记在任务完成时移除。
+    /// 移除挂任务完成而非调用方离开：首调用者取消若提前摘掉登记，后到的提交者会再起一轮
+    /// 重复探测/转码（两个任务写同一产物路径互相覆盖）。用 Lazy 包任务工厂：
+    /// GetOrAdd 的工厂本身可并发执行多次，但只有胜出的 Lazy 会被访问 Value，
+    /// 落选 Lazy 的工厂永远不会运行，不会启动多余 ffmpeg。
+    /// 工厂由调用方决定令牌：共享任务应绑定服务生命周期，不能被某个调用方取消连坐。
+    /// 清理续延必须在 GetOrAdd 返回之后注册：GetOrAdd 的工厂先于条目入表执行，
+    /// 若任务同步完成（如 ffmpeg 缺失时 SubmitCoreAsync 在首个 await 前 fault），
+    /// 工厂内注册的续延会先于入表运行 TryRemove → 移除落空 → 条目永久残留，
+    /// 后续提交永远命中缓存任务（装好 ffmpeg 也要重启才恢复）。</summary>
+    internal static Lazy<Task<T>> RegisterInFlight<T>(
+        ConcurrentDictionary<string, Lazy<Task<T>>> table, string key, Func<Task<T>> factory)
+    {
+        var lazy = table.GetOrAdd(key,
+            _ => new Lazy<Task<T>>(factory, LazyThreadSafetyMode.ExecutionAndPublication));
+        // 任务完成（成功/失败/取消）即摘除登记；ExecuteSynchronously 保证先登记后移除的顺序。
+        // 块体 lambda 明确走 Action 重载：表达式体会被 Func<TResult> 重载解析抢走
+        lazy.Value.ContinueWith(t =>
+        {
+            table.TryRemove(KeyValuePair.Create(key, lazy));
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return lazy;
+    }
+
+    /// <summary>job 登记上限：_jobs 按设计保留旧 token（旧页面/二维码仍可访问），
+    /// 但长驻进程数月使用会无限膨胀——超限时淘汰最老的「已定案、字幕已定、窗口内无传输」job。
+    /// 重提交走产物复用不重转码；被淘汰 job 的旧页面返回 404（可接受）。
+    /// 只在提交路径顺带执行，频率受提交频率约束。</summary>
+    private const int MaxJobs = 1024;
+
+    private void EnforceJobCap()
+    {
+        if (_jobs.Count <= MaxJobs) return;
+        var cutoff = DateTime.UtcNow.Ticks - TransferProtectWindow.Ticks;
+        var evict = _jobs
+            .Where(kv => kv.Value.State != JobState.Transcoding
+                && !kv.Value.SubtitlesPending
+                && (!_lastTransfer.TryGetValue(kv.Key, out var last) || last < cutoff))
+            .OrderBy(kv => kv.Value.CreatedTicks)
+            // 预算多留 1 个名额：本次提交的新 job 尚未入表，淘汰后它进来仍不超限
+            .Take(_jobs.Count - MaxJobs + 1)
+            .Select(kv => kv.Key)
+            .ToList();
+        foreach (var token in evict)
+        {
+            _jobs.TryRemove(token, out _);
+            _lastTransfer.TryRemove(token, out _);
         }
     }
 
@@ -555,19 +596,10 @@ public sealed class SessionServer : IAsyncDisposable
     public async Task<MediaJob> OpenFolderFileAsync(FolderJob folder, int index, CancellationToken ct = default)
     {
         ThrowIfStopping();
-        // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次。
-        // 同 SubmitAsync：Lazy 包工厂，落选的并发提交不会启动多余探测
+        // 在途去重：先查后建的窗口期里并发双击同一文件 → 共享同一个任务，只转一次（见 RegisterInFlight）
         var key = $"{folder.Token}:{index}";
-        var lazy = _opening.GetOrAdd(key, _ => new Lazy<Task<MediaJob>>(
-            () => OpenFolderFileCoreAsync(folder, index, ct), LazyThreadSafetyMode.ExecutionAndPublication));
-        try
-        {
-            return await lazy.Value;
-        }
-        finally
-        {
-            _opening.TryRemove(KeyValuePair.Create(key, lazy));
-        }
+        var lazy = RegisterInFlight(_opening, key, () => OpenFolderFileCoreAsync(folder, index, _lifetime.Token));
+        return await lazy.Value.WaitAsync(ct);
     }
 
     private async Task<MediaJob> OpenFolderFileCoreAsync(FolderJob folder, int index, CancellationToken ct)

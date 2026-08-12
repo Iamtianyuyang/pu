@@ -239,6 +239,30 @@ public class FolderServingTests
         Assert.Equal(job1.ArtifactPath, job2.ArtifactPath); // 同一产物（复用命中）
     }
 
+    [Fact]
+    public async Task 调用方取消_不连坐后台任务_注册照常完成()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var sample = CreateSampleMp4(dir.Path, "cancel.mp4");
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18929);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // 已取消的调用方立即拿到 OCE；但共享任务已启动（RegisterInFlight 工厂立即执行）
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.SubmitAsync(sample, cts.Token));
+
+        // 后台任务绑定服务生命周期令牌，不受调用方取消影响：探测照常完成并注册 job
+        for (var i = 0; i < 100 && server.LatestUrl is null; i++)
+            await Task.Delay(50);
+        Assert.NotNull(server.LatestUrl);
+        var token = server.LatestUrl.Split('/').Last();
+        for (var i = 0; i < 40 && server.JobStateFor(token) != JobState.Serving; i++)
+            await Task.Delay(50);
+        Assert.Equal(JobState.Serving, server.JobStateFor(token));
+    }
+
     private static async Task WaitForServingAsync(MediaJob job)
     {
         for (var i = 0; i < 120; i++)

@@ -86,13 +86,25 @@ public sealed record TranscodePlan(
         var video = info.Video;
         if (video is null)
         {
-            // 纯音频：AAC+MP4+faststart 直出，其余封装为 M4A（浏览器不能解的转 AAC）
+            // 纯音频：浏览器原生可解的格式直出（mp3 全平台；FLAC/WAV Chrome/Edge/Safari/Android 均支持），
+            // AAC+MP4+faststart 直出，其余封装为 M4A（浏览器不能解的转 AAC）
             var audio = info.Audio;
             if (audio is null)
                 return new TranscodePlan(PlanKind.Unsupported, "文件中没有可用的音视频流", [], "mp4");
             bool isMp4 = info.FormatName.Contains("mp4", StringComparison.OrdinalIgnoreCase);
             if (audio.Codec == "aac" && isMp4 && isFastStart)
                 return new TranscodePlan(PlanKind.ServeOriginal, "AAC + MP4 已 faststart，原样直出", [], "m4a");
+            // 直出按「扩展名 + 编码/容器」双重门控：Content-Type 由扩展名决定（audio/mpeg 等），
+            // 扩展名与编码不一致时（如 m4a 容器里的 mp3 码流）不进直出——否则浏览器拿到
+            // 与码流不符的 MIME，反而播不了，保持原逻辑封装为 M4A 转 AAC
+            var ext = Path.GetExtension(info.FileName);
+            if (audio.Codec == "mp3" && string.Equals(ext, ".mp3", StringComparison.OrdinalIgnoreCase))
+                return new TranscodePlan(PlanKind.ServeOriginal, "MP3 浏览器原生可解，原样直出", [], "mp3");
+            if (audio.Codec == "flac" && string.Equals(ext, ".flac", StringComparison.OrdinalIgnoreCase))
+                return new TranscodePlan(PlanKind.ServeOriginal, "FLAC 浏览器原生可解，原样直出", [], "flac");
+            if (info.FormatName.Contains("wav", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(ext, ".wav", StringComparison.OrdinalIgnoreCase))
+                return new TranscodePlan(PlanKind.ServeOriginal, "WAV 浏览器原生可解，原样直出", [], "wav");
             bool copyable = audio.Codec is "aac" or "ac3" or "eac3";
             var args = new List<string>
             {

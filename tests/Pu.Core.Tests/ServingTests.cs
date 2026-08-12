@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Pu.Core.Cache;
 using Pu.Core.Common;
@@ -155,6 +157,38 @@ public class ServingTests
         Assert.True(await SubsPending()); // 未定案：页面继续慢轮询字幕
         job.SetSubtitles([new SubtitleFile(2, "subrip", "chi", "", "2.vtt")]);
         Assert.False(await SubsPending()); // 定案（空表也算）：页面停止轮询
+    }
+
+    [Fact]
+    public async Task 超过Job上限_淘汰最老的已定案job()
+    {
+        using var dir = new TempDir();
+        var sample = await MakeVideo(dir.Path, "cap.mp4",
+            ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]);
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18930);
+
+        // 灌入 1100 个已定案假 job（Register 不探测不转码；CreatedTicks 构造时记录）
+        for (var i = 0; i < 1100; i++)
+        {
+            var fake = new MediaJob
+            {
+                Token = RandomNumberGenerator.GetHexString(32),
+                SourcePath = Path.Combine(dir.Path, $"fake{i}.mp4"),
+                Title = $"fake{i}",
+                SourceDescription = "fake",
+                ArtifactPath = Path.Combine(dir.Path, $"fake{i}.mp4"),
+                ContentType = "video/mp4",
+                PlanExplanation = "",
+            };
+            fake.SetServing([]); // 已定案 + 字幕已定 → 可淘汰
+            server.Register(fake);
+        }
+        Assert.Equal(1100, server.JobCount);
+
+        // 真实提交触发上限淘汰：定案假 job 被清出，job 数收敛到上限 1024
+        await server.SubmitAsync(sample);
+        Assert.Equal(1024, server.JobCount);
     }
 
     [Theory]
@@ -530,6 +564,57 @@ public class ServingTests
         {
             job.Changed -= handler;
         }
+    }
+
+    // ── RegisterInFlight 在途登记清理 ──
+
+    [Fact]
+    public async Task 在途登记_同步fault的任务_入表后立即移除()
+    {
+        var table = new ConcurrentDictionary<string, Lazy<Task<int>>>(StringComparer.Ordinal);
+        // 工厂返回已 fault 的任务（等价于 ffmpeg 缺失时 SubmitCoreAsync 在首个 await 前
+        // 同步 fault）：若清理续延在 GetOrAdd 工厂内注册，会先于条目入表执行 TryRemove，
+        // 条目永久残留，后续提交永远命中缓存任务（装好 ffmpeg 也要重启才恢复）。
+        var lazy = SessionServer.RegisterInFlight(table, "k",
+            () => Task.FromException<int>(new InvalidOperationException("sync fault")));
+        Assert.Empty(table); // GetOrAdd 返回后即应被清理
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => lazy.Value);
+    }
+
+    [Fact]
+    public async Task 在途登记_异步完成后移除_下次提交走新工厂()
+    {
+        var table = new ConcurrentDictionary<string, Lazy<Task<int>>>(StringComparer.Ordinal);
+        var lazy = SessionServer.RegisterInFlight(table, "k",
+            async () => { await Task.Delay(30); return 42; });
+        Assert.Single(table); // 任务在途：登记保留（并发提交去重）
+        Assert.Equal(42, await lazy.Value);
+        for (var i = 0; i < 100 && !table.IsEmpty; i++)
+            await Task.Delay(10);
+        Assert.Empty(table); // 完成后摘除：下一次提交走新工厂（重新探测）
+    }
+
+    [Fact]
+    public async Task Mp3文件_直出_以AudioMpeg提供()
+    {
+        if (!TestEnv.HasFfmpeg) return;
+        using var dir = new TempDir();
+        var mp3 = Path.Combine(dir.Path, "song.mp3");
+        var gen = await ProcessRunner.RunAsync("ffmpeg",
+        ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+         "-c:a", "libmp3lame", "-b:a", "64k", mp3]);
+        Assert.True(gen.ExitCode == 0, $"ffmpeg 生成 mp3 失败: {gen.StdErr}");
+
+        await using var server = await SessionServer.StartAsync(preferredPort: 18941);
+        var job = await server.SubmitAsync(mp3);
+        Assert.Equal(JobState.Serving, job.State); // 直出：立即可播
+        Assert.False(job.IsHls);
+        Assert.Equal("audio/mpeg", job.ContentType);
+
+        using var http = new HttpClient();
+        using var resp = await http.GetAsync($"http://127.0.0.1:{server.Port}/s/{job.Token}/media");
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("audio/mpeg", resp.Content.Headers.ContentType?.MediaType);
     }
 
     private static async Task<string> MakeVideo(string dir, string name, string[] codecArgs)
