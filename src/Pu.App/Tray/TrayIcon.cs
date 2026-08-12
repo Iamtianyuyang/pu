@@ -21,7 +21,7 @@ public sealed class TrayIcon : IDisposable
     private const uint TPM_RIGHTBUTTON = 0x0002, TPM_RETURNCMD = 0x0100, TPM_NONOTIFY = 0x0080;
     private const uint MF_STRING = 0x0000, MF_SEPARATOR = 0x0800;
     private const uint IMAGE_ICON = 1, LR_LOADFROMFILE = 0x0010;
-    private const int MenuOpen = 1, MenuExit = 2;
+    private const int MenuOpen = 1, MenuAbout = 2, MenuExit = 3;
     private const string ClassName = "PuTrayWindow";
 
     private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -33,6 +33,9 @@ public sealed class TrayIcon : IDisposable
     private IntPtr _hIcon;
     private bool _added;
     private bool _disposed;
+
+    /// <summary>用户点了「关于」。</summary>
+    public event Action? AboutRequested;
 
     /// <summary>显示主窗口（托盘线程回调）。</summary>
     public event Action? ShowRequested;
@@ -136,11 +139,14 @@ public sealed class TrayIcon : IDisposable
         var menu = CreatePopupMenu();
         AppendMenu(menu, MF_STRING, MenuOpen, "显示窗口");
         AppendMenu(menu, MF_SEPARATOR, 0, null);
+        AppendMenu(menu, MF_STRING, MenuAbout, "关于 噗~");
+        AppendMenu(menu, MF_SEPARATOR, 0, null);
         AppendMenu(menu, MF_STRING, MenuExit, "停止 噗~噗噗~~噗噗噗噗~~~~");
         var cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
             pt.X, pt.Y, 0, hWnd, IntPtr.Zero);
         DestroyMenu(menu);
         if (cmd == MenuOpen) ShowRequested?.Invoke();
+        else if (cmd == MenuAbout) AboutRequested?.Invoke();
         else if (cmd == MenuExit)
         {
             ExitRequested?.Invoke();

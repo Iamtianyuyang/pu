@@ -292,6 +292,7 @@ public static class Program
             if (instance is null) throw new InvalidOperationException("托盘启动超时");
 
             instance.ShowRequested += () => window.ShowWindow();
+            instance.AboutRequested += () => window.ShowAbout();
             instance.ExitRequested += () => cts.Cancel();
             return instance;
         }

@@ -507,6 +507,19 @@ public sealed partial class MainWindow : Window, IDisposable
     private void MinimizeButton_Click(object sender, RoutedEventArgs e)
         => WindowState = WindowState.Minimized;
 
+    /// <summary>打开「关于」对话框（托盘菜单入口）：需要焦点/层级与主窗口一致。</summary>
+    public void ShowAbout()
+    {
+        OnUi(() =>
+        {
+            var dialog = new AboutDialog
+            {
+                Owner = IsVisible ? this : null,
+            };
+            dialog.ShowDialog();
+        });
+    }
+
     private void CloseButton_Click(object sender, RoutedEventArgs e)
         => RequestClose();
 
