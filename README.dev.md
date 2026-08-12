@@ -20,18 +20,18 @@ pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹�
 
 ### 发给别人
 
-**安装版 `publish/pu-setup.exe`**（推荐）：双击 → 下一步 → 完成。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
+**全自带版 `publish/pu-setup-full.exe`**（推荐，大多数用户）：双击 → 下一步 → 完成。附带 ffmpeg/ffprobe（gyan.dev release-essentials，发布时下载一次缓存进 `tools/vendor\`，不进 git），装到 `{app}\ffmpeg\`，用户零依赖。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
 
-**全自带版 `pu-setup-full.exe` / `pu-windows-x64-full.zip`**：附带 ffmpeg/ffprobe（gyan.dev release-essentials，发布时下载一次缓存进 `tools/vendor\`，不进 git），装到 `{app}\ffmpeg\`，用户零依赖。
+**标准版 `publish/pu-setup.exe`**：同上但不带 ffmpeg，体积更小——给已自行安装 ffmpeg 的用户。
 
-**便携版 `publish/pu-windows-x64.zip`**：解压即用，不写注册表；需要右键菜单时手动执行：
+**便携版 `publish/pu-windows-x64.zip` / `pu-windows-x64-full.zip`**：解压即用，不写注册表；需要右键菜单时手动执行：
 
 ```
 pu.exe --install      # 安装到 %LOCALAPPDATA%\Pu\ 并注册右键菜单（无需管理员）
 pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 ```
 
-> 两个版本共用 `%LOCALAPPDATA%\Pu` 的配置与缓存；不要同时装两份（卸载任一份会清掉共享数据）。
+> 所有版本共用 `%LOCALAPPDATA%\Pu` 的配置与缓存；不要同时装两份（卸载任一份会清掉共享数据）。
 
 - **.NET 10 自包含单文件 exe**，目标电脑无需预装 .NET
 - ffmpeg 查找顺序：config.json → **exe 旁的 `ffmpeg\` 子目录（全自带版）** → PATH：
@@ -81,6 +81,7 @@ pu --register           注册右键菜单（扩展名清单可改 %LOCALAPPDATA
 pu --unregister         移除右键菜单
 pu --clean              清空转码缓存
 pu <视频文件|文件夹>      处理并弹出状态页/列表页（已有实例则交给它）
+pu <视频文件|文件夹> --debug   服务模式时输出日志到控制台（须放在路径之后）
 pu --help / --version
 ```
 
@@ -89,6 +90,8 @@ pu --help / --version
 ```powershell
 powershell -File tools/publish.ps1   # 发布单文件 exe + 便携 zip + 全自带 zip；装了 Inno Setup 时同时产出 pu-setup.exe / pu-setup-full.exe
 ```
+
+> 发布前记得同步版本号：`src/Pu.App/Pu.App.csproj` 的 `<Version>` 与 `tools/setup.iss` 的 `AppVersion` / `VersionInfoVersion` 两处（当前 csproj 已是 0.0.521，setup.iss 还停在 0.0.520）。
 
 ## 测试
 
