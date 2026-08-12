@@ -60,7 +60,7 @@
   <img src="assets/demo-preview.png" width="720" alt="完整流程演示：右键 → 扫码 → 开看" />
 </a>
 
-<video src="https://github.com/Iamtianyuyang/pu/releases/latest/download/demo.mp4" controls width="720"></video>
+<video src="https://raw.githubusercontent.com/Iamtianyuyang/pu/main/assets/demo.mp4" controls width="720"></video>
 
 > 🎬 完整流程演示：右键 → 扫码 → 开看。上面是内嵌播放器；如果浏览器不支持，点击预览图下载 [demo.mp4](assets/demo.mp4)。
 
