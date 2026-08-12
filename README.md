@@ -11,11 +11,11 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/github/v/release/Iamtianyuyang/pu?color=1e5aa8&label=版本&cacheSeconds=3600" alt="版本">
-  <img src="https://img.shields.io/github/downloads/Iamtianyuyang/pu/total?color=1e5aa8&label=下载量&cacheSeconds=3600" alt="下载量">
+  <img src="https://badgen.net/github/release/Iamtianyuyang/pu?color=1e5aa8&label=版本" alt="版本">
+  <img src="https://img.shields.io/github/downloads/Iamtianyuyang/pu/total?color=1e5aa8&label=下载量" alt="下载量">
   <img src="https://img.shields.io/badge/Windows-10+-0078D6?logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/github/license/Iamtianyuyang/pu?color=1e5aa8&label=许可证&cacheSeconds=3600" alt="许可证">
-  <img src="https://img.shields.io/github/stars/Iamtianyuyang/pu?color=f1c40f&label=Stars&cacheSeconds=3600" alt="Stars">
+  <img src="https://badgen.net/github/license/Iamtianyuyang/pu?color=1e5aa8&label=许可证" alt="许可证">
+  <img src="https://badgen.net/github/stars/Iamtianyuyang/pu?color=f1c40f&label=Stars" alt="Stars">
 </p>
 
 <p>
@@ -56,13 +56,9 @@
 
 ## 🧁 三分钟上手
 
-<a href="assets/demo.mp4">
-  <img src="assets/demo-preview.png" width="720" alt="完整流程演示：右键 → 扫码 → 开看" />
-</a>
+<img src="assets/demo.gif" width="720" alt="完整流程演示：右键 → 扫码 → 开看" />
 
-<video src="https://github.com/Iamtianyuyang/pu/releases/download/v0.0.521/demo.mp4" controls="controls" style="max-width: 720px;"></video>
-
-> 🎬 完整流程演示：右键 → 扫码 → 开看。上面是内嵌播放器；如果浏览器不支持，点击预览图下载 [demo.mp4](assets/demo.mp4)。
+> 🎬 完整流程演示：右键 → 扫码 → 开看（上面是动图，自动播放）。想看原视频可以下载 [demo.mp4](assets/demo.mp4)。
 
 ### 1️⃣ 下载安装
 
