@@ -171,17 +171,17 @@ public sealed class SessionServer : IAsyncDisposable
 
         app.MapGet("/s/{token}", (string token) =>
         {
+            // 先校验 token 再 Touch：失效 token 的请求（旧页面刷新）不算真实活动
+            if (!server._jobs.TryGetValue(token, out _)) return Results.NotFound();
             server.Touch();
-            return server._jobs.TryGetValue(token, out _)
-                ? Results.Content(EmbeddedWeb.IndexHtml, "text/html; charset=utf-8")
-                : Results.NotFound();
+            return Results.Content(EmbeddedWeb.IndexHtml, "text/html; charset=utf-8");
         });
 
         app.MapGet("/s/{token}/media", (string token, HttpContext context) =>
         {
-            server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
             if (job.State != JobState.Serving) return Results.Conflict();
+            server.Touch();
             // 分片每 2s 拉一个，逐条打日志会疯狂写盘（2 小时电影 ≈ 3600 次）→ 10s 限频
             if (Environment.TickCount64 - Interlocked.Read(ref server._lastMediaLogTicks) >= 10_000)
             {
@@ -200,7 +200,6 @@ public sealed class SessionServer : IAsyncDisposable
         // HLS 分片 / m3u8 内引用的任何文件（防目录穿越：只放行普通文件名）
         app.MapGet("/s/{token}/hls/{file}", (string token, string file, HttpContext context) =>
         {
-            server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
             if (job.State != JobState.Serving || !job.IsHls) return Results.NotFound();
             if (file.Length == 0 || file.Length > 64
@@ -212,6 +211,7 @@ public sealed class SessionServer : IAsyncDisposable
                 return Results.NotFound();
             var path = Path.Combine(Path.GetDirectoryName(job.ArtifactPath)!, file);
             if (!File.Exists(path)) return Results.NotFound();
+            server.Touch();
             server.BeginTransfer(token);
             var type = file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
                 ? "application/vnd.apple.mpegurl"
@@ -236,21 +236,20 @@ public sealed class SessionServer : IAsyncDisposable
 
         app.MapGet("/s/{token}/qr.png", (string token, string? u) =>
         {
-            server.Touch();
             if (!server._jobs.TryGetValue(token, out _)) return Results.NotFound();
             // 只允许给本服务自己的 URL 出码：防止拿 token 生成指向钓鱼站的二维码
             if (!IsOwnUrl(u, server.Port, server.LanIp)) return Results.BadRequest();
+            server.Touch();
             return Results.Bytes(QrPng(u!), "image/png");
         });
 
         app.MapGet("/s/{token}/sub/{index:int}", (string token, int index) =>
         {
-            server.Touch();
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
             var sub = job.Subtitles.FirstOrDefault(s => s.StreamIndex == index);
-            return sub is null || !File.Exists(sub.VttPath)
-                ? Results.NotFound()
-                : Results.File(sub.VttPath, "text/vtt; charset=utf-8");
+            if (sub is null || !File.Exists(sub.VttPath)) return Results.NotFound();
+            server.Touch();
+            return Results.File(sub.VttPath, "text/vtt; charset=utf-8");
         });
 
         app.MapGet("/assets/pu-logo.png", (HttpContext context) =>
@@ -270,10 +269,9 @@ public sealed class SessionServer : IAsyncDisposable
         // ── 文件夹模式：列表页 / 状态轮询 / 点开文件 ──
         app.MapGet("/f/{token}", (string token) =>
         {
+            if (!server._folders.TryGetValue(token, out _)) return Results.NotFound();
             server.Touch();
-            return server._folders.TryGetValue(token, out _)
-                ? Results.Content(EmbeddedWeb.FolderHtml, "text/html; charset=utf-8")
-                : Results.NotFound();
+            return Results.Content(EmbeddedWeb.FolderHtml, "text/html; charset=utf-8");
         });
         app.MapGet("/f/{token}/status", (string token) =>
         {
@@ -284,9 +282,9 @@ public sealed class SessionServer : IAsyncDisposable
         });
         app.MapPost("/f/{token}/open/{index:int}", async (string token, int index) =>
         {
-            server.Touch();
             if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
             if (folder.Files.All(f => f.Index != index)) return Results.NotFound();
+            server.Touch();
             // 不用请求级 CancellationToken：客户端断开（拿到 URL 后关闭连接）不能连坐取消后台转码；
             // 用服务生命周期令牌：只有服务停止时才取消（StopAsync 内部统一处理）
             var job = await server.OpenFolderFileAsync(folder, index, server.ShutdownToken);
@@ -511,7 +509,6 @@ public sealed class SessionServer : IAsyncDisposable
     /// 重提交走产物复用不重转码；被淘汰 job 的旧页面返回 404（可接受）。
     /// 只在提交路径顺带执行，频率受提交频率约束。</summary>
     private const int MaxJobs = 1024;
-
     private void EnforceJobCap()
     {
         if (_jobs.Count <= MaxJobs) return;
@@ -529,6 +526,32 @@ public sealed class SessionServer : IAsyncDisposable
         {
             _jobs.TryRemove(token, out _);
             _lastTransfer.TryRemove(token, out _);
+        }
+    }
+
+    /// <summary>文件夹会话登记上限：_folders/_folderByPath 与 _jobs 一样按设计保留旧 token，
+    /// 但长驻进程右键过大量不同文件夹会无限膨胀（每份都持有完整文件列表）。
+    /// 超限时淘汰最老的会话（重提同路径会重建并刷新列表；被淘汰会话的旧页面返回 404，可接受）。
+    /// 只在新建会话路径执行：复用刷新不新增，不触发淘汰。</summary>
+    private const int MaxFolders = 128;
+
+    private void EnforceFolderCap()
+    {
+        if (_folders.Count <= MaxFolders) return;
+        var evict = _folders.Values
+            .OrderBy(f => f.CreatedTicks)
+            .Take(_folders.Count - MaxFolders)
+            .Select(f => f.Token)
+            .ToList();
+        foreach (var token in evict)
+        {
+            _folders.TryRemove(token, out _);
+            // 同路径映射一并清理：重提同路径会重建会话，不留悬空引用
+            foreach (var (path, t) in _folderByPath)
+            {
+                if (string.Equals(t, token, StringComparison.Ordinal))
+                    _folderByPath.TryRemove(KeyValuePair.Create(path, t));
+            }
         }
     }
 
@@ -587,10 +610,22 @@ public sealed class SessionServer : IAsyncDisposable
     public async Task<FolderJob> SubmitFolderAsync(string folderPath, CancellationToken ct = default)
     {
         ThrowIfStopping();
-        var key = Path.GetFullPath(folderPath);
+        // 键统一去掉尾部分隔符：C:\a 与 C:\a\ 指向同一文件夹，避免重复建会话
+        // （根目录 C:\ 等保护不 trim，见 NormalizeFolderPath）
+        var key = NormalizeFolderPath(folderPath);
         // 在途去重 + 同路径复用（见 RegisterInFlight）：并发提交同一文件夹共享扫描，只建一个会话
         var lazy = RegisterInFlight(_submittingFolders, key, () => SubmitFolderCoreAsync(key, _lifetime.Token));
         return await lazy.Value.WaitAsync(ct);
+    }
+
+    /// <summary>文件夹路径规范化：全路径 + 去尾部分隔符；根目录（盘符根/UNC 根）保持原样。</summary>
+    private static string NormalizeFolderPath(string folderPath)
+    {
+        var full = Path.GetFullPath(folderPath);
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (trimmed.Length == 0) return full; // 纯分隔符路径（罕见）不 trim
+        if (trimmed.Length == 2 && trimmed[1] == ':') return full; // 盘符根 C:\
+        return trimmed;
     }
 
     private async Task<FolderJob> SubmitFolderCoreAsync(string fullPath, CancellationToken ct)
@@ -611,11 +646,13 @@ public sealed class SessionServer : IAsyncDisposable
         {
             Token = RandomNumberGenerator.GetHexString(32),
             FolderPath = fullPath,
-            Title = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar)),
+            // fullPath 已规范化（无尾部分隔符）：根目录时 GetFileName 为空，UI 有兜底显示
+            Title = Path.GetFileName(fullPath),
         };
         folder.Refresh(scan.Files, scan.Truncated);
         _folders[folder.Token] = folder;
         _folderByPath[fullPath] = folder.Token;
+        EnforceFolderCap(); // 新建会话后才可能超限：复用刷新不新增，不触发
         LatestUrl = UrlForFolder(folder);
         return folder;
     }

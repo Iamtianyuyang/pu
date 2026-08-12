@@ -75,7 +75,7 @@ public class FolderServingTests
 
         await using var server = await SessionServer.StartAsync(preferredPort: 18926);
         var folder1 = await server.SubmitFolderAsync(dir.Path);
-        Assert.Equal(1, folder1.Files.Count);
+        Assert.Single(folder1.Files);
 
         // 同一文件夹再提交 → 同一会话（token/URL 不变）；并发提交也只建一个
         var folder2 = await server.SubmitFolderAsync(dir.Path);
@@ -340,6 +340,50 @@ public class FolderServingTests
         using var dir = new TempDir();
         await using var server = await SessionServer.StartAsync(preferredPort: 18922);
         await Assert.ThrowsAsync<InvalidOperationException>(() => server.SubmitFolderAsync(dir.Path));
+    }
+
+    [Fact]
+    public async Task 超过文件夹会话上限_淘汰最老的会话_重提可重建()
+    {
+        await using var server = await SessionServer.StartAsync(preferredPort: 18931);
+        var roots = new List<string>();
+        try
+        {
+            // 130 个不同文件夹（扫描只按扩展名过滤，空文件即可，不依赖 ffmpeg）
+            for (var i = 0; i < 130; i++)
+            {
+                var d = Path.Combine(Path.GetTempPath(), $"pu-cap-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(d);
+                File.WriteAllBytes(Path.Combine(d, "a.mp4"), []);
+                roots.Add(d);
+            }
+
+            var submitted = new List<FolderJob>();
+            foreach (var d in roots) submitted.Add(await server.SubmitFolderAsync(d));
+
+            // 超限淘汰：会话数收敛到上限 128
+            Assert.Equal(128, server.SessionCount - server.JobCount);
+            // 最老的两个被淘汰：旧 token 的页面 404
+            using var client = new HttpClient();
+            var gone = await client.GetAsync($"http://localhost:{server.Port}/f/{submitted[0].Token}");
+            Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
+            // 最新的仍在
+            var alive = await client.GetAsync($"http://localhost:{server.Port}/f/{submitted[129].Token}");
+            Assert.Equal(HttpStatusCode.OK, alive.StatusCode);
+
+            // 重提被淘汰的路径 → 重建会话（新 token，页面可访问）
+            var rebuilt = await server.SubmitFolderAsync(roots[0]);
+            Assert.NotEqual(submitted[0].Token, rebuilt.Token);
+            var back = await client.GetAsync($"http://localhost:{server.Port}/f/{rebuilt.Token}");
+            Assert.Equal(HttpStatusCode.OK, back.StatusCode);
+        }
+        finally
+        {
+            foreach (var d in roots)
+            {
+                try { Directory.Delete(d, recursive: true); } catch { }
+            }
+        }
     }
 
     private sealed class TempDir : IDisposable

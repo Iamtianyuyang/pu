@@ -396,9 +396,13 @@ public sealed partial class MainWindow : Window, IDisposable
     /// <summary>同一文件夹再次显示：按当前 job 状态原地刷新行徽标，不重建集合（保住滚动位置）。</summary>
     private void UpdateFolderRows(FolderJob folder)
     {
+        // 一次快照：Refresh 在服务器线程并发替换列表（同一文件夹被重新右键时），
+        // 逐行重读会在列表变短时 row.Index 越界崩 UI 线程；快照后越界的行直接跳过
+        var files = folder.Files;
         foreach (var row in _folderRows)
         {
-            var file = folder.Files[row.Index];
+            if (row.Index >= files.Count) break;
+            var file = files[row.Index];
             var (stateText, stateBrush) = RowStateFor(folder, file);
             row.StateText = stateText;
             row.StateBrush = stateBrush;

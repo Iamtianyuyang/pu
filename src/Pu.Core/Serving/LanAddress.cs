@@ -14,8 +14,17 @@ public static class LanAddress
     /// </summary>
     public static string? GetLanIpv4()
     {
-        var interfaces = NetworkInterface.GetAllNetworkInterfaces().Select(Describe);
-        return Pick(interfaces)?.ToString();
+        try
+        {
+            var interfaces = NetworkInterface.GetAllNetworkInterfaces().Select(Describe);
+            return Pick(interfaces)?.ToString();
+        }
+        catch
+        {
+            // 网络栈异常（权限/平台不支持/驱动异常）：按无局域网地址处理，
+            // 调用方回退 localhost（UrlFor 已有 ?? "localhost" 兜底），不拖垮服务启动
+            return null;
+        }
     }
 
     /// <summary>网卡信息的决策输入（与系统 API 解耦，测试可直接构造）。</summary>

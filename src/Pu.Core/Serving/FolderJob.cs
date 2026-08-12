@@ -15,6 +15,9 @@ public sealed class FolderJob
     public required string FolderPath { get; init; }
     public required string Title { get; init; }
 
+    /// <summary>会话创建时刻（_folders 上限淘汰最老会话用；复用刷新不更新）。</summary>
+    public long CreatedTicks { get; init; } = DateTime.UtcNow.Ticks;
+
     /// <summary>扫描快照（锁保护：刷新与 HTTP 读取并发）。</summary>
     public IReadOnlyList<FolderFile> Files { get { lock (_gate) return _files; } }
 

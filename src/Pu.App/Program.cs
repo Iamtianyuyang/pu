@@ -186,6 +186,7 @@ public static class Program
             tray?.Dispose();
             window.Dispose();
             try { await inboxTask; } catch { }
+            try { await ipcTask; } catch { } // 命名管道监听循环：取消后自行收敛，等它退出（异常也已内部捕获）
             try { await idleTask; } catch { }
             return 0;
         }
