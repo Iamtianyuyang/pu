@@ -424,4 +424,29 @@ public class TranscodePlanTests
         var plan = TranscodePlan.Create(info, Nvenc, isFastStart: true);
         Assert.Equal(PlanKind.Remux, plan.Kind);
     }
+
+    [Fact]
+    public void Hevc8bit_裸码流_无时间戳_全转码不能Copy()
+    {
+        // .hevc 裸码流（format_name == "hevc"）没有 PTS/DTS：copy 进 TS 分片时 mpegts muxer
+        // 报 "first pts and dts value must be set" 必然失败（真实 ffmpeg 实测）——
+        // 必须走全转码（解码重建时间戳），不能走 hvc1 copy 捷径
+        var info = Media("hevc", bitDepth: 8, pixFmt: "yuv420p", profile: "Main", container: "hevc");
+        Assert.True(TranscodePlan.RequiresEncoder(info, TranscodePolicy.Auto));
+        var plan = TranscodePlan.Create(info, Soft, isFastStart: true);
+        Assert.Equal(PlanKind.FullTranscode, plan.Kind);
+        Assert.DoesNotContain("-c:v copy", Args(plan));
+        Assert.Contains("裸码流", plan.Explanation);
+    }
+
+    [Fact]
+    public void Hevc8bit_容器内有时间戳_仍走Copy()
+    {
+        // 同一份 HEVC 码流装进 MP4/MKV 就有时间戳：copy 捷径不受影响
+        var info = Media("hevc", bitDepth: 8, pixFmt: "yuv420p", profile: "Main", container: "matroska,webm");
+        Assert.False(TranscodePlan.RequiresEncoder(info, TranscodePolicy.Auto));
+        var plan = TranscodePlan.Create(info, Soft, isFastStart: true);
+        Assert.Equal(PlanKind.Remux, plan.Kind);
+        Assert.Contains("-c:v copy", Args(plan));
+    }
 }

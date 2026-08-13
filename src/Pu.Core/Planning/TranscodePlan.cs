@@ -69,6 +69,8 @@ public sealed record TranscodePlan(
         var video = info.Video;
         if (video is null) return false;              // 纯音频：只用内置 aac 编码器
         if (policy == TranscodePolicy.ForceGpu) return true;
+        // 裸 HEVC 码流没有 PTS/DTS，copy 进 TS 分片必然失败（见 IsRawHevc）——必须全转码
+        if (video.Codec == "hevc" && IsRawHevc(info)) return true;
         bool is8Bit = video.BitDepth <= 8;
         if (video.Codec == "h264" && is8Bit) return false;
         bool hevcMain10 = video.Codec == "hevc" && video.Profile.Contains("Main 10", StringComparison.OrdinalIgnoreCase);
@@ -150,8 +152,9 @@ public sealed record TranscodePlan(
         }
 
         // ── 3. HEVC 8bit / Main10：视频 copy + tag 改 hvc1（Safari/iOS 原生支持，方案.md 第五节）──
+        // 裸 HEVC 码流除外：没有时间戳，copy 必然失败（见 IsRawHevc），落到第 4 条全转码
         bool hevcMain10 = video.Codec == "hevc" && video.Profile.Contains("Main 10", StringComparison.OrdinalIgnoreCase);
-        if (video.Codec == "hevc" && (is8Bit || hevcMain10))
+        if (video.Codec == "hevc" && !IsRawHevc(info) && (is8Bit || hevcMain10))
         {
             var args = BuildMaps(info);
             args.AddRange(["-c:v", "copy", "-tag:v", "hvc1"]);
@@ -161,12 +164,22 @@ public sealed record TranscodePlan(
                 $"HEVC {video.Profile} 视频 copy，重封装为 HLS（Safari 必需）", args.ToArray(), "mp4.hls") { Hls = true };
         }
 
-        // ── 4. 全转码：HEVC 10bit / Hi10P / AV1 / VP9 / 其它 ──
-        return BuildFullTranscode(info, encoders, video, audioCopyable, forced: false);
+        // ── 4. 全转码：HEVC 10bit / Hi10P / AV1 / VP9 / 裸 HEVC 码流 / 其它 ──
+        return BuildFullTranscode(info, encoders, video, audioCopyable, forced: false,
+            note: IsRawHevc(info) ? "裸码流（无时间戳，copy 重封装必然失败）" : null);
     }
 
+    /// <summary>裸 HEVC 码流（format_name 恰为 "hevc" 的原始码流，无容器）判定。
+    /// 裸流没有 PTS/DTS：copy 重封装进 TS 分片时 mpegts muxer 报
+    /// "first pts and dts value must be set" 直接失败；全转码由解码器重建时间戳，不受影响。
+    /// MP4/MKV/MOV 容器内的 HEVC（format_name 含 mp4/matroska/mov）有时间戳，照常走 copy 捷径。</summary>
+    private static bool IsRawHevc(MediaInfo info)
+        => info.Video?.Codec == "hevc"
+           && string.Equals(info.FormatName, "hevc", StringComparison.OrdinalIgnoreCase);
+
     private static TranscodePlan BuildFullTranscode(
-        MediaInfo info, EncoderCatalog encoders, VideoStreamInfo video, bool audioCopyable, bool forced)
+        MediaInfo info, EncoderCatalog encoders, VideoStreamInfo video, bool audioCopyable, bool forced,
+        string? note = null)
     {
         var enc = encoders.PreferredH264Encoder ?? "libx264";
         if (enc != "libx264" && (video.Width < 256 || video.Height < 144))
@@ -185,7 +198,9 @@ public sealed record TranscodePlan(
         var how = enc == "libx264" ? "libx264 软编" : $"{enc} 硬编";
         var explanation = forced
             ? $"强制转码 {video.Codec} → H.264（{how}）"
-            : $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{how}）";
+            : note is null
+                ? $"{video.Codec} {video.BitDepth}bit 全转码 → H.264（{how}）"
+                : $"{video.Codec} {video.BitDepth}bit {note} 全转码 → H.264（{how}）";
         return new TranscodePlan(PlanKind.FullTranscode, explanation, full.ToArray(), "mp4.hls", inputArgs)
         {
             Hls = true,
