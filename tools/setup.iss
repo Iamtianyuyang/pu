@@ -1,7 +1,7 @@
 ﻿; pu~ installer script (Inno Setup 6, per-user, no admin).
 ; Build: ISCC.exe tools/setup.iss   (publish.ps1 does this automatically when ISCC is found)
 #define AppBrand "噗~噗噗~~噗噗噗噗~~~~"
-#define AppVersion "0.0.521"
+#define AppVersion "0.0.522"
 
 [Setup]
 AppId={{8F3A7C2E-5B1D-4E9F-A6C8-2D7B9E1F4A35}
@@ -21,7 +21,7 @@ SetupIconFile=..\assets\pu.ico
 Compression=lzma2/ultra64
 WizardStyle=modern
 UninstallDisplayIcon={app}\pu.exe
-VersionInfoVersion=0.0.521.0
+VersionInfoVersion=0.0.522.0
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
