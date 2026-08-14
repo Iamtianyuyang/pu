@@ -3,6 +3,21 @@
 > 右键视频 → `噗~噗噗~~噗噗噗噗~~~~` → 手机 / iPad 扫码就能看。对面不用装任何 App，浏览器打开即播。
 > 给人看的介绍在 [README.md](README.md)，这里记技术细节。
 
+## 目录
+
+- [当前状态](#当前状态net-10-wpf-桌面版)
+- [发给别人](#发给别人)
+- [单个视频](#单个视频)
+- [文件夹（整季剧集）](#文件夹整季剧集)
+- [硬件加速](#硬件加速)
+- [产物与缓存](#产物与缓存)
+- [Web 路由](#web-路由)
+- [命令](#命令)
+- [打包](#打包)
+- [测试](#测试)
+- [目录结构](#目录结构)
+- [备注](#备注)
+
 ## 当前状态：.NET 10 + WPF 桌面版
 
 右键视频/文件夹 → **WPF 桌面窗口**（浅色界面，不弹控制台、不强制打开浏览器）：
@@ -11,7 +26,7 @@
 - 转码进度条（实时百分比 + 硬件加速说明）
 - 文件夹模式：文件列表直接点播
 - 托盘常驻：显示窗口 / 停止
-- 网页版（/s/ 与 /f/）保留，供手机 / 平板扫码后播放
+- 网页版保留（[Web 路由](#web-路由)：`/s/` 与 `/f/`），供手机 / 平板扫码后播放
 
 ```powershell
 # 开发运行
@@ -20,7 +35,7 @@ pu --register          # 注册右键菜单（34 个媒体扩展名 + 文件夹�
 
 ### 发给别人
 
-**全自带版 `publish/pu-setup-full.exe`**（推荐，大多数用户）：双击 → 下一步 → 完成。附带 ffmpeg/ffprobe（gyan.dev release-essentials，发布时下载一次缓存进 `tools/vendor\`，不进 git），装到 `{app}\ffmpeg\`，用户零依赖。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
+**全自带版 `publish/pu-setup-full.exe`**（推荐，大多数用户）：双击 → 下一步 → 完成。附带 ffmpeg/ffprobe（gyan.dev release-essentials，发布时下载一次缓存进 `tools\vendor\`，不进 git），装到 `{app}\ffmpeg\`，用户零依赖。自动装到 `%LOCALAPPDATA%\Programs\pu~`、注册右键菜单、创建开始菜单快捷方式和「应用和功能」卸载条目；卸载时反注册菜单并清理 `%LOCALAPPDATA%\Pu`。
 
 **标准版 `publish/pu-setup.exe`**：同上但不带 ffmpeg，体积更小——给已自行安装 ffmpeg 的用户。
 
@@ -49,7 +64,7 @@ pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 4. 内嵌字幕（SRT/ASS）并行抽成 WebVTT；PGS/VobSub 图形字幕自动跳过。
    直出/复用命中时**视频立即可播**，字幕后台抽取、就绪后补发（页面自动更新字幕按钮）；
    抽字幕失败只丢字幕，不拖垮视频
-5. Kestrel 普通权限监听 `0.0.0.0`，端口被占自动上探，URL 带随机 token
+5. Kestrel 普通权限监听 `0.0.0.0`（默认 8000 起，被占自动上探），URL 带随机 token，路由见 [Web 路由](#web-路由)
 6. 托盘图标（停止 / 打开状态页），空闲 30 分钟自动退出
 
 ### 文件夹（整季剧集）
@@ -72,6 +87,24 @@ pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 - 中央缓存 `%LOCALAPPDATA%\Pu\cache\`：默认上限 **20 GB**，LRU 淘汰（命中刷新标记；正在被读取的条目跳过）
 - `pu --clean` 一键清空：中央缓存 + 所有登记过的就地产物（空的 `.pu\` 目录一并删）
 
+## Web 路由
+
+Kestrel 普通权限监听 `0.0.0.0`（http.sys 需要管理员，Kestrel 不需要），默认 8000 起被占自动上探；所有路径带随机 token 鉴权——不知道 URL 的人拿不到内容，Range 由 `Results.File` 处理（Safari 拖进度条可用）：
+
+| 路由 | 说明 |
+|:---|:---|
+| `/s/{token}` | 播放 / 状态页 |
+| `/s/{token}/status` | 轮询 JSON（转码进度 / 字幕列表） |
+| `/s/{token}/media` | 媒体本体（Range） |
+| `/s/{token}/hls/{file}` | HLS 分片 |
+| `/s/{token}/sub/{index}` | WebVTT 字幕 |
+| `/s/{token}/qr.png` | URL 二维码 |
+| `/f/{token}` | 文件夹列表页 |
+| `/f/{token}/status` | 文件夹会话状态 JSON |
+| `/f/{token}/open/{index}` | 打开列表中的文件（POST） |
+
+页面与 hls.min.js 等静态资源嵌入程序集（EmbeddedWeb），离线可用。
+
 ## 命令
 
 ```powershell
@@ -91,7 +124,7 @@ pu --help / --version
 powershell -File tools/publish.ps1   # 发布单文件 exe + 便携 zip + 全自带 zip；装了 Inno Setup 时同时产出 pu-setup.exe / pu-setup-full.exe
 ```
 
-> 发布前记得同步版本号：`src/Pu.App/Pu.App.csproj` 的 `<Version>` 与 `tools/setup.iss` 的 `AppVersion` / `VersionInfoVersion` 两处（当前 csproj 已是 0.0.521，setup.iss 还停在 0.0.520）。
+> 发布前记得同步版本号：`src/Pu.App/Pu.App.csproj` 的 `<Version>` 与 `tools/setup.iss` 的 `AppVersion` / `VersionInfoVersion`（当前均已同步至 0.0.522）。
 
 ## 测试
 
@@ -109,7 +142,8 @@ src/Pu.Core/     引擎（无 Windows 依赖）：Probe / Planning / Pipeline / 
 src/Pu.App/      入口：WPF 界面、CLI 分发、Shell 注册、托盘、单实例
 web/             状态/播放页 + 文件夹列表页（嵌入程序集，离线可用）
 tests/           单元 + 集成测试
-assets/          图标源（编辑 SVG 后跑 tools/build-icon.ps1 重新生成 pu.ico）
+tools/           发布脚本 publish.ps1 / setup.iss、图标生成 build-icon.ps1 / Pu.IconBuilder
+assets/          图标与演示素材（手绘稿 pu~.png；改图后跑 tools/build-icon.ps1 重新生成 pu-logo.png / pu.ico）
 tmp/             临时产物（已 gitignore）
 ```
 
