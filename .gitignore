@@ -18,3 +18,6 @@ tmp/
 # 工具生成
 .serena/
 tools/vendor/
+
+# uv 虚拟环境（.agents 下 skill 的 Python 运行时）
+.agents/.venv/
