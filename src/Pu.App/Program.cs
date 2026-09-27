@@ -396,6 +396,11 @@ public static class Program
             case "--uninstall":
                 UninstallSelf();
                 return Task.FromResult(0);
+            case "--allow-firewall":
+                // 窗口里点「放行」后经 UAC 提权启动的内部命令（不写进 --help）：改完防火墙就退出，
+                // 失败原因写进参数给的文件，由主进程读回显示
+                return Task.FromResult(FirewallCheck.AllowHere(
+                    Environment.ProcessPath ?? "", args.Length > 1 ? args[1] : null));
             default:
                 Console.Error.WriteLine($"未知参数: {args[0]}（pu --help 查看用法）");
                 return Task.FromResult(2);

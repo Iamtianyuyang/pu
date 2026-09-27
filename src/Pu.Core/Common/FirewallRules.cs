@@ -104,6 +104,10 @@ public static class FirewallRules
         return false;
     }
 
+    /// <summary>两个程序路径是否指向同一个 exe（环境变量、大小写、引号都不影响）。</summary>
+    public static bool SamePath(string a, string b)
+        => string.Equals(NormalizePath(a), NormalizePath(b), StringComparison.OrdinalIgnoreCase);
+
     /// <summary>规则里的路径可能带环境变量（%LOCALAPPDATA%\…）、大小写不一：展开 + 规范化后比较。</summary>
     private static string NormalizePath(string path)
     {
