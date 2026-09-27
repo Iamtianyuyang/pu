@@ -258,7 +258,10 @@ public static class Program
         if (error is not null) throw error;
         if (instance is null) throw new InvalidOperationException("主窗口启动超时（15 秒）");
         instance.SetBaseUrl(() => $"http://{server.LanIp ?? "localhost"}:{server.Port}");
-        instance.JobStateLookup = server.JobStateFor; // 文件夹行徽标：转码中/就绪/失败
+        instance.JobLookup = server.JobFor; // 文件夹行状态：转码中 42% / 就绪 / 失败
+        // 手机打开了链接 → 窗口切到「送到了 iPad」。服务级事件：job 定案后窗口会退订 Changed，
+        // 而扫码往往发生在定案之后（直出文件一提交就可播），不能挂在 job 事件上
+        server.ClientArrived += instance.OnClientArrived;
         return instance;
     }
 

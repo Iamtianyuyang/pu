@@ -5,13 +5,16 @@
 
 ## 当前状态：.NET 10 + WPF 桌面版
 
-右键视频/文件夹 → **WPF 桌面窗口**（浅色界面，不弹控制台、不强制打开浏览器）：
+右键视频/文件夹 → **WPF 桌面窗口**（不弹控制台、不强制打开浏览器）：
 
-- 二维码 + 「复制链接 / 打开链接」按钮
-- 转码进度条（实时百分比 + 硬件加速说明）
-- 文件夹模式：文件列表直接点播
-- 托盘常驻：显示窗口 / 停止
-- 网页版（/s/ 与 /f/）保留，供手机 / 平板扫码后播放
+- 窗口宽 440、高度随内容；默认停在鼠标所在屏幕的右下角，向上长高（用户拖动过就不再自动挪）
+- 二维码 + 链接 + 「复制链接 / 在这台电脑上打开」；转码进度（排线进度条 + 剩余时间估算 + 任务栏按钮进度）
+- **送达**：手机打开链接后（`SessionServer.ClientArrived`）窗口切到「已送到 iPad」，二维码收起，可再展开给第二台设备扫；转码失败时分享区整块收起
+- 文件夹模式：整个文件夹一个二维码 + 列表（也可在电脑上点开单集）；窗口可上下拉伸，高度记在 `%LOCALAPPDATA%\Pu\ui.json`；手机上点开的集这边也会刷新状态
+- 深浅色跟随 Windows「应用模式」（`Ui/Theme/Light.xaml`、`Dark.xaml`，token 与网页 `pu.css` 一一对应；`PU_THEME=dark|light` 可强制指定，截图用）
+- 噗噗吉祥物 `Ui/Mascot.xaml` 由 `tools/mascot/build.py` 生成（与网页 `mascot.svg` 同源），动画在 `Mascot.xaml.cs`
+- 托盘常驻：显示窗口 / 关于 / 停止
+- 网页版（/s/ 与 /f/）供手机 / 平板扫码后播放
 
 ```powershell
 # 开发运行
@@ -72,7 +75,7 @@ pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 - **链接失效**：失效 token 的页面也返回页面本身（状态码 404），显示「回电脑上重新右键」而不是浏览器空白错误页
 - **扫码送达**：状态轮询带 `?d=` 设备提示（iPadOS Safari 伪装成 Mac，只有页面能认出 iPad），服务端记录非本机来访设备并发 `SessionServer.ClientArrived` 事件，供电脑窗口显示「送到了 iPad」
 - 公共资源走 `/assets/{name}` 白名单：`pu.css` / `pu.js` / `mascot.svg` / `words.json`（ETag 协商缓存）、`pu-logo.png` / `hls.min.js`（长缓存）。无构建步骤，改完重新 `dotnet build` 生效
-- 吉祥物：`tools/mascot/trace.py` 描摹 `assets/pu~.png` 拆层 → `tools/mascot/build.py` 补画表情生成 `web/mascot.svg`；夸夸词与台词只维护 `web/words.json` 一份
+- 吉祥物：`tools/mascot/trace.py` 描摹 `assets/pu~.png` 拆层 → `tools/mascot/build.py` 补画表情，同时生成 `web/mascot.svg` 与 WPF 的 `src/Pu.App/Ui/Mascot.xaml`；夸夸词与台词只维护 `web/words.json` 一份（WPF 也读它）
 
 ### 硬件加速
 

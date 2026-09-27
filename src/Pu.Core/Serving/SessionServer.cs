@@ -601,9 +601,13 @@ public sealed class SessionServer : IAsyncDisposable
         return set;
     }
 
-    /// <summary>按 token 查 job 状态（WPF 文件夹行徽标用）；查不到返回 null。</summary>
+    /// <summary>按 token 查 job 状态；查不到返回 null。</summary>
     public JobState? JobStateFor(string token)
         => _jobs.TryGetValue(token, out var job) ? job.State : null;
+
+    /// <summary>按 token 查 job（WPF 文件夹行显示「转码中 42%」用）；查不到（已被淘汰）返回 null。</summary>
+    public MediaJob? JobFor(string token)
+        => _jobs.TryGetValue(token, out var job) ? job : null;
 
     /// <summary>直出/复用命中：视频已在提交时置可播，这里只补字幕（失败只丢字幕）。</summary>
     private async Task ExtractSubsAsync(

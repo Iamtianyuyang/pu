@@ -1,0 +1,22 @@
+<!-- 配色 token（暗色）：键名与网页 web/pu.css 的 CSS 变量一一对应，改色两边一起改 -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="PaperBrush" Color="#11141B" />
+    <SolidColorBrush x:Key="CardBrush" Color="#191D27" />
+    <SolidColorBrush x:Key="LineBrush" Color="#2A303E" />
+    <SolidColorBrush x:Key="RuleBrush" Color="#088FB2F2" />
+    <SolidColorBrush x:Key="TextBrush" Color="#ECE9E1" />
+    <SolidColorBrush x:Key="Text2Brush" Color="#B9B7B0" />
+    <SolidColorBrush x:Key="Text3Brush" Color="#9496A0" />
+    <SolidColorBrush x:Key="InkBrush" Color="#8FB2F2" />
+    <SolidColorBrush x:Key="OnInkBrush" Color="#0C1830" />
+    <SolidColorBrush x:Key="InkSoftBrush" Color="#1D2A45" />
+    <SolidColorBrush x:Key="MarkerBrush" Color="#E9C64E" />
+    <SolidColorBrush x:Key="OkBrush" Color="#63C38F" />
+    <SolidColorBrush x:Key="WarnBrush" Color="#E3B155" />
+    <SolidColorBrush x:Key="BadBrush" Color="#F1857B" />
+    <SolidColorBrush x:Key="MascotFillBrush" Color="#191D27" />
+    <!-- 悬停底色：卡片上叠一层淡墨水色 -->
+    <SolidColorBrush x:Key="HoverBrush" Color="#212636" />
+    <Color x:Key="ShadowColor">#000000</Color>
+</ResourceDictionary>
