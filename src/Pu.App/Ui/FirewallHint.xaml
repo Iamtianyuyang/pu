@@ -1,0 +1,29 @@
+<!-- 防火墙提示卡片：手机扫码连不上最常见的原因。单个视频和文件夹两个视图各放一张，由 MainWindow 统一驱动 -->
+<UserControl x:Class="Pu.App.Ui.FirewallHint"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Visibility="Collapsed">
+    <Border Padding="16,13,16,14" CornerRadius="14" BorderThickness="1.5"
+            Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource WarnBrush}">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <!-- 手绘感的感叹号三角 -->
+                <Path Width="17" Height="15" Margin="0,1,8,0" VerticalAlignment="Center" Stretch="Uniform"
+                      Stroke="{DynamicResource WarnBrush}" StrokeThickness="1.8" StrokeLineJoin="Round"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Data="M 9,1.5 L 16.6,14.2 Q 16.9,15 16,15 L 2,15 Q 1.1,15 1.4,14.2 Z M 9,6 L 9,10 M 9,12.6 L 9,12.7" />
+                <TextBlock FontSize="14.5" FontWeight="Bold" Foreground="{DynamicResource WarnBrush}" Text="手机可能连不上" />
+            </StackPanel>
+            <TextBlock x:Name="BodyText" Margin="0,6,0,0" FontSize="13" LineHeight="20" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Text2Brush}" />
+            <StackPanel Margin="0,10,0,0" Orientation="Horizontal">
+                <Button x:Name="FixButton" Height="36" Padding="14,0" FontSize="13" Style="{StaticResource PuInkButton}"
+                        Content="放行（需要管理员确认）" Click="FixButton_Click" />
+                <Button x:Name="SettingsButton" Margin="6,0,0,0" Style="{StaticResource PuQuietButton}"
+                        Content="自己去设置" Click="SettingsButton_Click" />
+            </StackPanel>
+            <TextBlock x:Name="NoteText" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Text3Brush}" Visibility="Collapsed" />
+        </StackPanel>
+    </Border>
+</UserControl>

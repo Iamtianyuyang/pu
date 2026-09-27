@@ -16,6 +16,8 @@ public static class Program
 {
     private const string MutexName = @"Local\pu~";
     private static volatile FolderJob? s_currentFolder;
+    // 最近一次防火墙判定：放行进行中要保持卡片文案（判定不变，只换说明文字）
+    private static FwVerdict? s_firewall;
 
     // 每个 job 只订阅一次 Changed（文件夹复用同一 job 时避免重复订阅/重复刷新）
     private static readonly HashSet<MediaJob> WiredJobs = [];
@@ -133,6 +135,10 @@ public static class Program
 
             var tray = StartTray(server, cts, window);
 
+            // 防火墙：手机扫码连不上最常见的原因。启动时查一次，每个新任务再查（用户可能中途自己放行了）
+            window.FirewallFixRequested += () => _ = Task.Run(() => FixFirewallAsync(server, window));
+            RefreshFirewall(server, window);
+
             // 先亮窗（「正在分析」占位），再跑探测/决策——避免右键后几秒没界面像卡死
             window.ShowBusy(input);
             window.ShowWindow();
@@ -205,6 +211,7 @@ public static class Program
     private static async Task<string> HandleIncomingAsync(
         SessionServer server, MainWindow window, string path, CancellationToken ct)
     {
+        RefreshFirewall(server, window);
         if (Directory.Exists(path))
         {
             var folder = await server.SubmitFolderAsync(path, ct);
@@ -223,6 +230,37 @@ public static class Program
         WireJob(job, window); // 只订阅一次（文件夹复用同一 job 时不重复订阅/重复刷新）
         window.ActivateJob(job);
         return server.UrlFor(job);
+    }
+
+    /// <summary>后台复查防火墙（COM 枚举规则约 0.1 秒，不占 UI 线程）；读不到返回 null，窗口不提示。</summary>
+    private static void RefreshFirewall(SessionServer server, MainWindow window, string? note = null)
+    {
+        _ = Task.Run(() =>
+        {
+            var verdict = FirewallCheck.Check(Environment.ProcessPath ?? "", server.Port);
+            if (verdict != s_firewall) Log.Info($"防火墙判定: {verdict?.ToString() ?? "未知"}");
+            s_firewall = verdict;
+            window.SetFirewall(verdict, note);
+        });
+    }
+
+    /// <summary>用户点了「放行」：提权加规则（弹 UAC，用户确认）→ 复查 → 按结果更新卡片。</summary>
+    private static async Task FixFirewallAsync(SessionServer server, MainWindow window)
+    {
+        var exe = Environment.ProcessPath ?? "";
+        window.SetFirewall(s_firewall, "请在弹出的窗口里点「是」，允许噗噗修改防火墙设置…", busy: true);
+        var (result, error) = await FirewallCheck.AllowAsync(exe);
+        Log.Info($"防火墙放行: {result}{(error is null ? "" : " " + error)}");
+        var verdict = FirewallCheck.Check(exe, server.Port);
+        s_firewall = verdict;
+        window.SetFirewall(verdict, result switch
+        {
+            FirewallCheck.FixResult.Done => verdict is FwVerdict.Allowed or null
+                ? null
+                : "规则已经加上了，但检查结果还是没放行。可以点「自己去设置」看看。",
+            FirewallCheck.FixResult.Cancelled => "已取消。需要的时候再点一次「放行」。",
+            _ => $"没能放行：{error}。可以点「自己去设置」手动放行。",
+        });
     }
 
     private static MainWindow StartWindow(SessionServer server, CancellationTokenSource cts)

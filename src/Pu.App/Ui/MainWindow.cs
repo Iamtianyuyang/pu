@@ -14,6 +14,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
+using Pu.App.Shell;
 using Pu.Core.Common;
 using Pu.Core.Serving;
 using QRCoder;
@@ -60,6 +61,14 @@ public sealed partial class MainWindow : Window, IDisposable
     public event Action? CloseRequested;
     public event Action<int>? FolderFileClicked;
 
+    /// <summary>用户点了防火墙提示里的「放行」（Program 负责提权加规则、复查后回调 SetFirewall）。</summary>
+    public event Action? FirewallFixRequested;
+
+    // 防火墙判定（null = 读不到或未检查：不提示）；放行过程中的说明文字；放行进行中（按钮禁用）
+    private FwVerdict? _firewall;
+    private string? _firewallNote;
+    private bool _firewallBusy;
+
     /// <summary>按 token 查任务（文件夹行显示转码中 42% / 就绪 / 失败；Program 注入）。</summary>
     public Func<string, MediaJob?>? JobLookup { get; set; }
 
@@ -69,6 +78,11 @@ public sealed partial class MainWindow : Window, IDisposable
         if (Application.Current is { } app) ThemeManager.Install(app);
         InitializeComponent();
         FolderList.ItemsSource = _folderRows;
+        foreach (var hint in new[] { JobFirewallHint, FolderFirewallHint })
+        {
+            hint.FixRequested += () => FirewallFixRequested?.Invoke();
+            hint.SettingsRequested += FirewallCheck.OpenSettings;
+        }
 
         _feedbackTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(1600) };
         _feedbackTimer.Tick += (_, _) => ResetActionFeedback();
@@ -178,6 +192,31 @@ public sealed partial class MainWindow : Window, IDisposable
         });
     }
 
+    /// <summary>防火墙检查结果（启动时、每个新任务、放行之后由 Program 调用）。
+    /// note：放行过程的说明（「正在等你确认…」「已取消」）；busy：放行进行中，按钮禁用防连点。</summary>
+    public void SetFirewall(FwVerdict? verdict, string? note = null, bool busy = false)
+    {
+        OnUi(() =>
+        {
+            _firewall = verdict;
+            _firewallNote = note;
+            _firewallBusy = busy;
+            if (_job is not null && JobView.Visibility == Visibility.Visible) ShowJob(_job);
+            else if (_folder is not null && FolderView.Visibility == Visibility.Visible) ShowFolder(_folder);
+        });
+    }
+
+    private void RenderFirewall(FirewallHint hint, bool show)
+    {
+        if (!show || _firewall is null or FwVerdict.Allowed)
+        {
+            hint.Visibility = Visibility.Collapsed;
+            return;
+        }
+        hint.Render(_firewall.Value, _firewallNote, _firewallBusy);
+        hint.Visibility = Visibility.Visible;
+    }
+
     public void SetFolderFileError(int index, string message)
     {
         OnUi(() =>
@@ -274,6 +313,8 @@ public sealed partial class MainWindow : Window, IDisposable
         JobSharePanel.Visibility = failed ? Visibility.Collapsed : Visibility.Visible;
         JobShowQrButton.Content = expanded ? "收起二维码" : "再给一台设备扫码";
         if (delivered) JobDeliveredDevice.Text = JoinDevices(devices);
+        // 已经有手机连进来 = 网络是通的，防火墙提示就不必了
+        RenderFirewall(JobFirewallHint, show: !delivered && !failed);
 
         var percent = Math.Clamp((int)Math.Round(job.Progress * 100), 0, 100);
         switch (job.State)
@@ -347,6 +388,7 @@ public sealed partial class MainWindow : Window, IDisposable
         FolderShowQrButton.Visibility = delivered ? Visibility.Visible : Visibility.Collapsed;
         FolderShowQrButton.Content = expanded ? "收起二维码" : "再给一台设备扫码";
         if (delivered) FolderDeliveredDevice.Text = JoinDevices(devices);
+        RenderFirewall(FolderFirewallHint, show: !delivered);
 
         FolderMascot.Face = files.Count == 0 ? MascotFace.Empty : delivered ? MascotFace.Ready : MascotFace.Idle;
         FolderBubble.Say(delivered ? [.. Words.Delivered, .. Words.Praise] : Words.Praise, 2.8);

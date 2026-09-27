@@ -167,6 +167,9 @@
                     <TextBlock x:Name="JobTitleText" Margin="0,14,0,0" Style="{StaticResource H1}" MaxHeight="54" TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="JobDescriptionText" Margin="0,4,0,0" Style="{StaticResource Note}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
 
+                    <!-- 防火墙没放行：手机扫了也连不上（送达后 / 转码失败时不显示） -->
+                    <ui:FirewallHint x:Name="JobFirewallHint" Margin="0,16,0,0" />
+
                     <!-- 送达：手机打开过之后 -->
                     <Border x:Name="JobDelivered" Margin="0,16,0,0" Padding="16,13" CornerRadius="14"
                             Background="{DynamicResource InkSoftBrush}" Visibility="Collapsed">
@@ -235,6 +238,7 @@
                     </StackPanel>
 
                     <StackPanel Grid.Row="2" Margin="0,14,0,0">
+                        <ui:FirewallHint x:Name="FolderFirewallHint" Margin="0,0,0,14" />
                         <Border x:Name="FolderDelivered" Padding="16,12" CornerRadius="14" Background="{DynamicResource InkSoftBrush}" Visibility="Collapsed">
                             <StackPanel>
                                 <TextBlock FontSize="16" FontWeight="Bold">
