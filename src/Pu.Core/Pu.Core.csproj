@@ -14,6 +14,10 @@
     <EmbeddedResource Include="..\..\web\index.html" LogicalName="web.index.html" />
     <EmbeddedResource Include="..\..\web\folder.html" LogicalName="web.folder.html" />
     <EmbeddedResource Include="..\..\web\hls.min.js" LogicalName="web.hls.min.js" />
+    <EmbeddedResource Include="..\..\web\pu.css" LogicalName="web.pu.css" />
+    <EmbeddedResource Include="..\..\web\pu.js" LogicalName="web.pu.js" />
+    <EmbeddedResource Include="..\..\web\mascot.svg" LogicalName="web.mascot.svg" />
+    <EmbeddedResource Include="..\..\web\words.json" LogicalName="web.words.json" />
     <EmbeddedResource Include="..\..\assets\pu-logo.png" LogicalName="assets.pu-logo.png" />
   </ItemGroup>
 

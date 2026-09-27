@@ -171,8 +171,11 @@ public sealed class SessionServer : IAsyncDisposable
 
         app.MapGet("/s/{token}", (string token) =>
         {
-            // 先校验 token 再 Touch：失效 token 的请求（旧页面刷新）不算真实活动
-            if (!server._jobs.TryGetValue(token, out _)) return Results.NotFound();
+            // 先校验 token 再 Touch：失效 token 的请求（旧页面刷新）不算真实活动。
+            // 失效 token 仍回页面本身（状态码 404）：扫了旧二维码的人看到的是「链接失效了，
+            // 回电脑上重新右键」，而不是浏览器的空白错误页。页面不含任何媒体信息
+            if (!server._jobs.TryGetValue(token, out _))
+                return Results.Content(EmbeddedWeb.IndexHtml, "text/html; charset=utf-8", statusCode: StatusCodes.Status404NotFound);
             server.Touch();
             return Results.Content(EmbeddedWeb.IndexHtml, "text/html; charset=utf-8");
         });
@@ -219,9 +222,10 @@ public sealed class SessionServer : IAsyncDisposable
             return Results.File(path, type, enableRangeProcessing: true);
         });
 
-        app.MapGet("/s/{token}/status", (string token) =>
+        app.MapGet("/s/{token}/status", (string token, string? d, HttpContext context) =>
         {
             if (!server._jobs.TryGetValue(token, out var job)) return Results.NotFound();
+            server.NoteClient(context, token, job.Clients, d);
             // 空闲退出按“真实活动”计时：只有转码中 / 字幕后补中的轮询算活跃（用户正在等待），
             // 已定案后的轮询不再续命——否则手机端开着的状态页会让服务永不空闲退出。
             // 播放中的媒体请求本身就 Touch，不受影响。
@@ -252,16 +256,17 @@ public sealed class SessionServer : IAsyncDisposable
             return Results.File(sub.VttPath, "text/vtt; charset=utf-8");
         });
 
-        app.MapGet("/assets/pu-logo.png", (HttpContext context) =>
+        // 页面公共资源：只认白名单里的名字（EmbeddedWeb.Assets），不按名字读任意嵌入资源。
+        // 不校验 token：样式/脚本/吉祥物不含任何媒体信息，页面加载前也拿不到 token
+        app.MapGet("/assets/{name}", (string name, HttpContext context) =>
         {
-            context.Response.Headers.CacheControl = "public, max-age=86400";
-            return Results.Bytes(EmbeddedWeb.LogoPng, "image/png");
-        });
-
-        app.MapGet("/assets/hls.min.js", (HttpContext context) =>
-        {
-            context.Response.Headers.CacheControl = "public, max-age=86400";
-            return Results.Text(EmbeddedWeb.HlsJs, "application/javascript");
+            if (!EmbeddedWeb.Assets.TryGetValue(name, out var asset)) return Results.NotFound();
+            var headers = context.Response.Headers;
+            headers.CacheControl = asset.Immutable ? "public, max-age=86400" : "no-cache";
+            headers.ETag = asset.ETag;
+            if (context.Request.Headers.IfNoneMatch == asset.ETag)
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            return Results.Bytes(asset.Bytes, asset.ContentType);
         });
 
         app.MapGet("/", () => Results.Text("pu~ is running"));
@@ -269,16 +274,26 @@ public sealed class SessionServer : IAsyncDisposable
         // ── 文件夹模式：列表页 / 状态轮询 / 点开文件 ──
         app.MapGet("/f/{token}", (string token) =>
         {
-            if (!server._folders.TryGetValue(token, out _)) return Results.NotFound();
+            // 失效 token 同 /s/：回页面本身 + 404，页面显示「链接失效了」
+            if (!server._folders.TryGetValue(token, out _))
+                return Results.Content(EmbeddedWeb.FolderHtml, "text/html; charset=utf-8", statusCode: StatusCodes.Status404NotFound);
             server.Touch();
             return Results.Content(EmbeddedWeb.FolderHtml, "text/html; charset=utf-8");
         });
-        app.MapGet("/f/{token}/status", (string token) =>
+        app.MapGet("/f/{token}/status", (string token, string? d, HttpContext context) =>
         {
             if (!server._folders.TryGetValue(token, out var folder)) return Results.NotFound();
+            server.NoteClient(context, token, folder.Clients, d);
             // 文件夹页 2s 轮询同样不续命（防永不空闲退出）；列表里只要有任务在转码就续
             if (server.ActiveJobCount > 0) server.Touch();
             return Results.Json(server.ToFolderDto(folder), JobStatusJsonContext.Default.FolderStatusDto);
+        });
+        app.MapGet("/f/{token}/qr.png", (string token, string? u) =>
+        {
+            if (!server._folders.TryGetValue(token, out _)) return Results.NotFound();
+            // 同 /s/ 的二维码：只给本服务自己的 URL 出码
+            if (!IsOwnUrl(u, server.Port, server.LanIp)) return Results.BadRequest();
+            return Results.Bytes(QrPng(u!), "image/png");
         });
         app.MapPost("/f/{token}/open/{index:int}", async (string token, int index) =>
         {
@@ -675,7 +690,40 @@ public sealed class SessionServer : IAsyncDisposable
             ?? throw new InvalidOperationException($"文件不存在: {index}");
         var job = await SubmitAsync(file.Path, ct);
         folder.MarkOpened(index, job.Token);
+        job.LinkFolder(folder.Token);
         return job;
+    }
+
+    /// <summary>有新的局域网设备打开了播放页 / 文件夹页（每个 token 每个 IP 只报一次）。
+    /// 服务级事件而非 MediaJob.Changed：job 定案后窗口会退订 Changed，
+    /// 而扫码往往发生在定案之后（直出文件一提交就可播）。订阅者异常一律吞掉。</summary>
+    public event Action<ClientArrival>? ClientArrived;
+
+    /// <summary>测试用：把回环地址也算作来访设备（测试客户端只能从本机发请求）。</summary>
+    internal static bool CountLocalClients { get; set; }
+
+    /// <summary>记录来访设备：本机（回环 / 本机任一 IPv4 / 当前局域网 IP）不算——
+    /// 电脑上点「打开播放页」不是「送到了」。</summary>
+    private void NoteClient(HttpContext context, string token, ClientLog log, string? hint)
+    {
+        var ip = context.Connection.RemoteIpAddress;
+        if (ip is null) return;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        var text = ip.ToString();
+        if (!CountLocalClients
+            && (IPAddress.IsLoopback(ip) || LocalHosts.Value.Contains(text) || text == LanIp))
+            return;
+        var device = ClientDevice.Label(hint, context.Request.Headers.UserAgent);
+        if (!log.TryAdd(text, device)) return;
+        LogSink?.Invoke($"送达 {token[..8]}… {device} {text}");
+        var handlers = ClientArrived?.GetInvocationList();
+        if (handlers is null) return;
+        var arrival = new ClientArrival(token, device);
+        foreach (var h in handlers)
+        {
+            try { ((Action<ClientArrival>)h)(arrival); }
+            catch { /* UI 订阅者异常不影响 HTTP 响应 */ }
+        }
     }
 
     public string UrlFor(MediaJob job) => $"http://{LanIp ?? "localhost"}:{Port}/s/{job.Token}";
@@ -819,18 +867,34 @@ public sealed class SessionServer : IAsyncDisposable
             string.IsNullOrEmpty(s.Title) && LangNames.TryGetValue(s.Language, out var n) ? n : s.Title)).ToList();
         return new JobStatusDto(
             job.State.ToString().ToLowerInvariant(), job.Progress, job.Error,
-            job.Title, job.PlanExplanation, subs, job.IsHls, job.SubtitlesPending, job.HasVideo);
+            job.Title, job.PlanExplanation, subs, job.IsHls, job.SubtitlesPending, job.HasVideo,
+            FolderLinkFor(job));
+    }
+
+    /// <summary>前后集：按源路径在会话列表里重新定位（列表刷新后下标会变，不能信打开时的 index）。
+    /// 会话已被淘汰或文件已不在列表里 → null，页面就不显示上一集/下一集。</summary>
+    private FolderLinkDto? FolderLinkFor(MediaJob job)
+    {
+        if (job.FolderToken is not { } folderToken || !_folders.TryGetValue(folderToken, out var folder))
+            return null;
+        var files = folder.Files;
+        var pos = folder.IndexOf(job.SourcePath);
+        if (pos < 0) return null;
+        return new FolderLinkDto(folder.Token, folder.Title, pos, files.Count,
+            pos > 0 ? ToFileDto(folder, files[pos - 1]) : null,
+            pos + 1 < files.Count ? ToFileDto(folder, files[pos + 1]) : null);
+    }
+
+    private FolderFileDto ToFileDto(FolderJob folder, FolderFile f)
+    {
+        if (folder.OpenedToken(f.Index) is { } token && _jobs.TryGetValue(token, out var job))
+            return new FolderFileDto(f.Index, f.Name, f.SizeBytes, job.State.ToString().ToLowerInvariant(), job.Progress);
+        return new FolderFileDto(f.Index, f.Name, f.SizeBytes, "new");
     }
 
     private FolderStatusDto ToFolderDto(FolderJob folder)
     {
-        var files = folder.Files.Select(f =>
-        {
-            var state = "new";
-            if (folder.OpenedToken(f.Index) is { } token && _jobs.TryGetValue(token, out var job))
-                state = job.State.ToString().ToLowerInvariant();
-            return new FolderFileDto(f.Index, f.Name, f.SizeBytes, state);
-        }).ToList();
+        var files = folder.Files.Select(f => ToFileDto(folder, f)).ToList();
         return new FolderStatusDto(folder.Title, files.Count, folder.Truncated, files);
     }
 

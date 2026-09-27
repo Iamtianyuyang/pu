@@ -61,6 +61,19 @@ pu.exe --uninstall    # 卸载（移除菜单 + 删除安装文件）
 - 同一文件夹重复右键 → **复用同一会话**（URL 不变）并刷新列表：新加的文件立即可见，`_folders` 不随重复提交膨胀（路径键去尾部分隔符，`C:\a` 与 `C:\a\` 算同一文件夹）
 - 文件夹会话登记上限 **128**：超限淘汰最老的会话（旧 token 的页面 404，列表快照随会话释放）；重提同路径自动重建并刷新列表
 
+### 网页（手机 / 平板扫码后看到的）
+
+视觉是「作业本上的圆珠笔涂鸦」：圆珠笔蓝 + 淡横线纸底，吉祥物噗噗按状态换表情；亮 / 暗色跟随系统。
+
+- **转码中**：主角是噗噗 + 大号百分比 + 圆珠笔排线进度条；剩余时间由前端按进度速率估算（前 5 秒显示「正在估算」）。二维码收进「分享」面板（页面是 http，`navigator.share` / `navigator.clipboard` 都不可用，复制走 `execCommand` 兜底）；宽屏（≥900px）右侧常驻二维码
+- **播放**：原生控件（iOS 全屏 / AirPlay / 画中画）；字幕按钮含「关」，选择按名字记住，换下一集沿用
+- **断点续播**：按文件名把位置存在这台设备的 localStorage（token 每次启动会变，文件名不会）；看过 15 秒、没到最后 5% 才续播
+- **上一个 / 下一个 + 自动连播**（仅从文件夹点开时）：播到一半后台 `POST /f/{token}/open/{next}` 预转下一个；播完倒数 5 秒，在**同一个 `<video>` 上换源** + `history.replaceState`——跳转新页面的话 iOS 不允许自动带声播放
+- **链接失效**：失效 token 的页面也返回页面本身（状态码 404），显示「回电脑上重新右键」而不是浏览器空白错误页
+- **扫码送达**：状态轮询带 `?d=` 设备提示（iPadOS Safari 伪装成 Mac，只有页面能认出 iPad），服务端记录非本机来访设备并发 `SessionServer.ClientArrived` 事件，供电脑窗口显示「送到了 iPad」
+- 公共资源走 `/assets/{name}` 白名单：`pu.css` / `pu.js` / `mascot.svg` / `words.json`（ETag 协商缓存）、`pu-logo.png` / `hls.min.js`（长缓存）。无构建步骤，改完重新 `dotnet build` 生效
+- 吉祥物：`tools/mascot/trace.py` 描摹 `assets/pu~.png` 拆层 → `tools/mascot/build.py` 补画表情生成 `web/mascot.svg`；夸夸词与台词只维护 `web/words.json` 一份
+
 ### 硬件加速
 
 全转码路径按 **NVENC → AMF → QSV → libx264** 选编码器——这个顺序就是「独显优先」：N 卡必为独显，AMF 多为 A 卡独显，QSV 基本是 Intel 核显。注意 `ffmpeg -encoders` 列的是编译进 build 的编码器（没硬件也照列），所以**硬件候选逐个实测**（lavfi 试编 8 帧），第一个真能用的胜出；硬件编码器自动配硬件解码（`-hwaccel`），失败自动软解回退一次；低于 256×144 的小视频直接软编（硬编有最小尺寸限制）。
@@ -107,7 +120,8 @@ dotnet test
 ```
 src/Pu.Core/     引擎（无 Windows 依赖）：Probe / Planning / Pipeline / Serving / Ipc / Cache
 src/Pu.App/      入口：WPF 界面、CLI 分发、Shell 注册、托盘、单实例
-web/             状态/播放页 + 文件夹列表页（嵌入程序集，离线可用）
+web/             播放页 + 文件夹列表页 + 公共样式/脚本/吉祥物（嵌入程序集，离线可用）
+tools/mascot/    吉祥物描摹与表情生成脚本（uv run）
 tests/           单元 + 集成测试
 assets/          图标源（编辑 SVG 后跑 tools/build-icon.ps1 重新生成 pu.ico）
 tmp/             临时产物（已 gitignore）

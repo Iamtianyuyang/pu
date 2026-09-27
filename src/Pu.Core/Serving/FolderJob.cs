@@ -18,6 +18,20 @@ public sealed class FolderJob
     /// <summary>会话创建时刻（_folders 上限淘汰最老会话用；复用刷新不更新）。</summary>
     public long CreatedTicks { get; init; } = DateTime.UtcNow.Ticks;
 
+    /// <summary>打开过这个列表页的局域网设备（电脑窗口显示「送到了 iPad」）。</summary>
+    public ClientLog Clients { get; } = new();
+
+    /// <summary>按源文件路径找列表下标（列表刷新后下标可能变，播放页的上一集/下一集按路径重新定位）。</summary>
+    public int IndexOf(string path)
+    {
+        var files = Files;
+        for (var i = 0; i < files.Count; i++)
+        {
+            if (string.Equals(files[i].Path, path, StringComparison.OrdinalIgnoreCase)) return i;
+        }
+        return -1;
+    }
+
     /// <summary>扫描快照（锁保护：刷新与 HTTP 读取并发）。</summary>
     public IReadOnlyList<FolderFile> Files { get { lock (_gate) return _files; } }
 

@@ -40,6 +40,20 @@ public sealed class MediaJob
     /// <summary>job 创建时刻（_jobs 上限淘汰最老定案 job 用）。</summary>
     public long CreatedTicks { get; init; } = DateTime.UtcNow.Ticks;
 
+    /// <summary>打开过这个播放页的局域网设备（电脑窗口显示「送到了 iPad」）。</summary>
+    public ClientLog Clients { get; } = new();
+
+    private string? _folderToken;
+
+    /// <summary>从哪个文件夹会话点开的（播放页据此给出上一集/下一集）；单文件右键为 null。
+    /// 同一文件被多个文件夹会话点开时以最近一次为准。</summary>
+    public string? FolderToken { get { lock (_gate) return _folderToken; } }
+
+    public void LinkFolder(string folderToken)
+    {
+        lock (_gate) _folderToken = folderToken;
+    }
+
     public JobState State { get { lock (_gate) return _state; } }
     public double Progress { get { lock (_gate) return _progress; } }
     public string? Error { get { lock (_gate) return _error; } }

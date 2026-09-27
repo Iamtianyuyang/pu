@@ -1,0 +1,149 @@
+/* 噗~噗噗~~噗噗噗噗~~~~ 网页公共样式（播放页 / 文件夹页共用，/assets/pu.css）
+   视觉：作业本上的圆珠笔涂鸦——圆珠笔蓝主色、极淡横线纸底、手绘只做点缀。
+   配色 token 与 WPF 主题字典一一对应，改色两边一起改。 */
+
+:root{
+  --paper:#F9F9F6; --card:#FFFFFF; --line:#DDE1EA; --rule:rgba(11,63,143,.045);
+  --text:#17213A; --text-2:#48526B; --text-3:#636C84;
+  --ink:#0B3F8F; --on-ink:#FFFFFF; --ink-soft:#E7EDF8;
+  --marker:#FFE27A; --ok:#23794A; --warn:#8F5B00; --bad:#BF3A30;
+  --mascot-fill:#FFFFFF; --screen:#0E1320;
+  --ease:cubic-bezier(.22,1,.36,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#11141B; --card:#191D27; --line:#2A303E; --rule:rgba(143,178,242,.03);
+    --text:#ECE9E1; --text-2:#B9B7B0; --text-3:#9496A0;
+    --ink:#8FB2F2; --on-ink:#0C1830; --ink-soft:#1D2A45;
+    --marker:#E9C64E; --ok:#63C38F; --warn:#E3B155; --bad:#F1857B;
+    --mascot-fill:#191D27; --screen:#05070B;
+    color-scheme:dark;
+  }
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  min-height:100svh;
+  background:var(--paper);
+  /* 作业本横线：32px 行距，极淡 */
+  background-image:repeating-linear-gradient(to bottom,transparent 0 31px,var(--rule) 31px 32px);
+  color:var(--text);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+::selection{background:var(--marker);color:#17213A}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+[hidden]{display:none!important}
+:focus-visible{outline:2.5px solid var(--ink);outline-offset:2px;border-radius:6px}
+
+.page{max-width:620px;margin:0 auto;padding:0 16px 40px}
+
+/* ── 顶栏 ── */
+.topbar{display:flex;align-items:center;gap:10px;min-height:56px}
+.topbar .grow{flex:1}
+.link-back{display:inline-flex;align-items:center;gap:4px;color:var(--ink);font-weight:600;font-size:14.5px;
+  text-decoration:none;padding:8px 4px}
+.link-back svg{width:18px;height:18px}
+
+/* ── 按钮 ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 16px;
+  border-radius:12px;border:1.5px solid var(--line);background:var(--card);color:var(--text);
+  font-weight:600;font-size:14.5px;white-space:nowrap;transition:border-color .15s,background .15s,transform .12s var(--ease)}
+.btn:hover{border-color:var(--ink)}
+.btn:active{transform:scale(.97)}
+.btn svg{width:18px;height:18px;flex:none}
+.btn-ink{background:var(--ink);border-color:var(--ink);color:var(--on-ink)}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--ink);padding:0 10px}
+.btn-quiet:hover{border-color:transparent;background:var(--ink-soft)}
+
+/* ── 吉祥物 ── */
+.pu-mascot{display:block;width:100%;height:100%;color:var(--ink);overflow:visible}
+.pu-mascot .m-face{display:none}
+.pu-mascot[data-face=idle] .m-idle,.pu-mascot[data-face=busy] .m-busy,
+.pu-mascot[data-face=ready] .m-ready,.pu-mascot[data-face=error] .m-error,
+.pu-mascot[data-face=empty] .m-empty{display:inline}
+.pu-mascot *{transform-box:fill-box;transform-origin:center}
+.m-idle .m-eyes{animation:pu-blink 4.2s infinite}
+@keyframes pu-blink{0%,94%,100%{transform:scaleY(1)}96.5%{transform:scaleY(.12)}}
+.pu-mascot[data-face=busy]{animation:pu-squash 1.1s ease-in-out infinite;transform-origin:50% 96%}
+@keyframes pu-squash{50%{transform:scale(1.035,.965)}}
+.m-busy .m-steam{animation:pu-puff 1.1s ease-in-out infinite}
+@keyframes pu-puff{50%{transform:translateY(-3px) scale(1.06);opacity:.55}}
+.m-spark{animation:pu-twinkle 1.8s ease-in-out infinite}
+.m-spark:nth-child(2){animation-delay:.45s}.m-spark:nth-child(3){animation-delay:.9s}
+@keyframes pu-twinkle{50%{transform:scale(.55) rotate(20deg);opacity:.6}}
+.m-sweat{animation:pu-sweat 2.4s ease-in infinite}
+@keyframes pu-sweat{0%{transform:translateY(-2px);opacity:0}25%{opacity:1}100%{transform:translateY(7px);opacity:0}}
+.m-question{animation:pu-bob 2s ease-in-out infinite}
+@keyframes pu-bob{50%{transform:translateY(-2px) rotate(-8deg)}}
+
+/* ── 噗噗的对话气泡：手绘不规则圆角 + 小尾巴 ── */
+.speaker{display:flex;align-items:flex-end;gap:6px}
+.speaker .mascot{flex:none}
+.bubble{position:relative;align-self:flex-start;margin-top:4px;max-width:15em;
+  background:var(--card);border:2px solid var(--ink);color:var(--text);
+  border-radius:18px 21px 17px 20px / 16px 19px 21px 15px;
+  padding:6px 13px 7px;font-size:14px;font-weight:600;line-height:1.45}
+.bubble::before{content:"";position:absolute;left:-9px;bottom:10px;width:14px;height:12px;
+  background:var(--card);border-left:2px solid var(--ink);border-bottom:2px solid var(--ink);
+  border-radius:0 0 0 12px;transform:skewY(-28deg)}
+.bubble span{display:inline-block;transition:opacity .28s,transform .28s var(--ease)}
+.bubble span.swap{opacity:0;transform:translateY(4px)}
+
+/* ── 圆珠笔排线进度条 ── */
+.hatch{position:relative;height:20px;--p:0%}
+.hatch svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.hatch .fill{clip-path:inset(-2px calc(100% - var(--p)) -2px 0);transition:clip-path .5s var(--ease)}
+.hatch.indet .fill{clip-path:none;animation:pu-scribble 1.4s ease-in-out infinite}
+@keyframes pu-scribble{0%,100%{opacity:.18}50%{opacity:.42}}
+
+/* ── 荧光笔划重点 ── */
+.hl{background:linear-gradient(transparent 55%,var(--marker) 55% 92%,transparent 92%);padding:0 2px;
+  -webkit-box-decoration-break:clone;box-decoration-break:clone}
+@media (prefers-color-scheme:dark){.hl{color:var(--text);background:linear-gradient(transparent 60%,rgba(233,198,78,.45) 60% 94%,transparent 94%)}}
+
+/* ── 分享面板（底部抽屉，宽屏居中） ── */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(10,14,24,.42);z-index:20;opacity:0;transition:opacity .2s}
+.sheet-backdrop.open{opacity:1}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;margin:0 auto;max-width:420px;
+  background:var(--card);border-radius:22px 22px 0 0;border:1.5px solid var(--line);border-bottom:0;
+  padding:20px 20px calc(22px + env(safe-area-inset-bottom));
+  transform:translateY(105%);transition:transform .28s var(--ease)}
+.sheet.open{transform:none}
+@media (min-width:640px){.sheet{bottom:auto;top:50%;border-radius:22px;border-bottom:1.5px solid var(--line);
+  transform:translateY(-40%);opacity:0;transition:transform .25s var(--ease),opacity .2s}
+  .sheet.open{transform:translateY(-50%);opacity:1}}
+.sheet h2{font-size:17px;font-weight:700}
+.sheet p{font-size:13.5px;color:var(--text-2);margin-top:2px}
+.qr-box{margin:16px auto 14px;width:212px;padding:12px;background:#fff;border-radius:16px;border:1.5px solid var(--line)}
+.qr-box img{display:block;width:100%;aspect-ratio:1;image-rendering:pixelated}
+.url-line{font:12.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--text-2);word-break:break-all;
+  user-select:all;-webkit-user-select:all;background:var(--paper);border:1.5px solid var(--line);border-radius:10px;padding:8px 11px}
+.sheet .row{display:flex;gap:10px;margin-top:12px}
+.sheet .row .btn{flex:1}
+
+/* ── 轻提示 ── */
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));z-index:30;
+  transform:translate(-50%,16px);opacity:0;pointer-events:none;
+  display:flex;align-items:center;gap:12px;max-width:calc(100% - 32px);
+  background:var(--text);color:var(--paper);border-radius:14px;padding:10px 12px 10px 16px;
+  font-size:14px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.18);transition:opacity .2s,transform .25s var(--ease)}
+.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast button{color:var(--marker);font-weight:700;padding:4px 6px}
+
+/* ── 断线提示 ── */
+.offline{display:flex;align-items:center;gap:8px;margin:4px 0 8px;padding:8px 12px;border-radius:10px;
+  background:var(--ink-soft);color:var(--text);font-size:13.5px}
+.offline::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none;animation:pu-scribble 1.2s infinite}
+
+.brand-foot{margin-top:36px;text-align:center;font-size:12px;color:var(--text-3);letter-spacing:.3px}
+
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+@media (prefers-reduced-motion:reduce){
+  .pu-mascot,.pu-mascot *,.hatch .fill,.offline::before{animation:none!important;transition:none!important}
+  .bubble span,.toast,.sheet,.sheet-backdrop,.btn{transition:none}
+}

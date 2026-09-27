@@ -3,320 +3,347 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f5f7fb">
+<meta name="theme-color" content="#F9F9F6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#11141B" media="(prefers-color-scheme: dark)">
 <meta name="description" content="噗~噗噗~~噗噗噗噗~~~~ 局域网视频播放页">
 <title>噗~噗噗~~噗噗噗噗~~~~</title>
 <link rel="icon" type="image/png" href="/assets/pu-logo.png">
+<link rel="stylesheet" href="/assets/pu.css">
 <style>
-:root{
-  --bg:#f5f7fb;
-  --surface:#ffffff;
-  --surface-2:#eef2f9;
-  --line:#dce3ee;
-  --line-strong:#c2cede;
-  --text:#1e2735;
-  --text-2:#4f5c72;
-  --text-3:#66738a;
-  --blue:#2f5bb5;
-  --blue-deep:#1d3f86;
-  --blue-hover:#3a6bc9;
-  --blue-soft:#e9effa;
-  --sky:#78bdf4;
-  --green:#2e9463;
-  --green-ink:#21724c;
-  --green-soft:#e4f4ec;
-  --amber-ink:#8a5a10;
-  --amber-soft:#fdf3e0;
-  --amber-line:#ecd9ae;
-  --red:#c02f47;
-  --red-soft:#fbeef0;
-  --red-line:#efc9cf;
-  --ease-out:cubic-bezier(.22,1,.36,1);
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{
-  background:
-    radial-gradient(700px 380px at -10% -8%, #e9eff9 0, transparent 62%),
-    radial-gradient(620px 420px at 110% 14%, #e7f0fb 0, transparent 64%),
-    var(--bg);
-  color:var(--text);
-  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  -webkit-font-smoothing:antialiased;
-  padding:max(20px,env(safe-area-inset-top)) 18px calc(34px + env(safe-area-inset-bottom));
-  max-width:560px;margin:0 auto;
-  display:flex;flex-direction:column;gap:16px;
-  min-height:100svh;box-sizing:border-box;
-}
-@media (min-width:600px){ body{ padding-top:48px } }
-::selection{background:rgba(47,91,181,.18)}
-
-/* ── header ── */
-header{display:flex;align-items:center;gap:13px;min-height:56px}
-.logo{width:56px;height:56px;flex:none;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(47,91,181,.16))}
-h1{font-size:19px;font-weight:700;letter-spacing:-.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.pill{margin-left:auto;flex:none;display:flex;align-items:center;gap:7px;
-  font-size:12.5px;font-weight:550;color:var(--text-2);border:1px solid var(--line);
-  border-radius:999px;padding:5px 12px;background:var(--surface);transition:color .25s,background .25s,border-color .25s}
-.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3);transition:background .25s}
-.pill.busy{color:var(--blue-deep);background:var(--blue-soft);border-color:#cddbf2}
-.pill.busy .dot{background:var(--blue);animation:blink 1.1s ease-in-out infinite}
-.pill.ok{color:var(--green-ink);border-color:#c8e5d6;background:var(--green-soft)}
-.pill.ok .dot{background:var(--green)}
-.pill.bad{color:var(--red);border-color:var(--red-line);background:var(--red-soft)}
-.pill.bad .dot{background:var(--red)}
-@keyframes blink{50%{opacity:.25}}
-
-/* ── cards ── */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:24px 22px;
-  box-shadow:0 18px 48px rgba(35,55,95,.08)}
-.hidden{display:none!important}
-.stage{animation:enter .28s var(--ease-out)}
-@keyframes enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion: reduce){
-  .pill.busy .dot{animation:none}
-  .stage{animation:none}
-  #barFill{transition:none}
-  .bar::after{display:none}
+/* ── 等待（转码中）：噗噗在左上使劲，数字和排线是主角 ── */
+/* 手机上内容整体落在屏幕中部偏上，不挤在顶上留半屏空白 */
+.wait{min-height:calc(100svh - 56px - 120px);display:flex;flex-direction:column;justify-content:center;padding-bottom:6vh}
+.wait-grid{display:grid;gap:28px}
+.wait .speaker{margin-top:6px}
+.wait .mascot{width:104px;height:104px}
+.file-title{font-size:21px;font-weight:750;line-height:1.35;letter-spacing:-.2px;word-break:break-word;margin-top:14px}
+.numbers{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:22px}
+.pct{font-size:64px;font-weight:800;line-height:1;letter-spacing:-2px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.pct small{font-size:26px;font-weight:700;letter-spacing:0;margin-left:2px}
+.eta{font-size:15px;font-weight:600;color:var(--text-2);text-align:right}
+.wait .hatch{margin:14px 0 16px}
+.reassure{font-size:15px;color:var(--text)}
+.plan{font-size:13px;color:var(--text-3);margin-top:6px}
+.qr-aside{display:none}
+@media (min-width:900px){
+  .page.wide{max-width:980px}
+  .wait-grid{grid-template-columns:minmax(0,1fr) 280px;align-items:center;gap:64px}
+  .wait .mascot{width:136px;height:136px}
+  .file-title{font-size:26px}
+  .qr-aside{display:block;background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:20px;text-align:center}
+  .qr-aside .qr-box{margin:12px auto}
+  .qr-aside h2{font-size:15px;font-weight:700}
+  .qr-aside p{font-size:13px;color:var(--text-2)}
 }
 
-/* ── QR ── */
-#qrCard{display:flex;flex-direction:column;align-items:center;gap:15px;text-align:center}
-.qr-frame{position:relative;background:#fff;border:1px solid var(--line);border-radius:20px;padding:16px;
-  box-shadow:0 16px 38px rgba(47,91,181,.12)}
-.qr-frame .corner{position:absolute;width:20px;height:20px;border:2.5px solid var(--blue);pointer-events:none}
-.qr-frame .corner.tl{top:-5px;left:-5px;border-right:0;border-bottom:0;border-top-left-radius:9px}
-.qr-frame .corner.tr{top:-5px;right:-5px;border-left:0;border-bottom:0;border-top-right-radius:9px}
-.qr-frame .corner.bl{bottom:-5px;left:-5px;border-right:0;border-top:0;border-bottom-left-radius:9px}
-.qr-frame .corner.br{bottom:-5px;right:-5px;border-left:0;border-top:0;border-bottom-right-radius:9px}
-#qr{width:204px;height:204px;display:block;image-rendering:pixelated;border-radius:8px}
-.qr-hint{font-size:13px;color:var(--text-2)}
-.url{font:11.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--text-3);word-break:break-all;user-select:all;
-  background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:8px 13px;max-width:100%}
-.url:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
-#planText{font-size:12.5px;color:var(--text-3)}
+/* ── 播放 ── */
+.player{position:relative;background:var(--screen);aspect-ratio:16/9;margin:0 -16px;overflow:hidden}
+@media (min-width:652px){.player{margin:0;border-radius:16px}}
+.player.audio{aspect-ratio:auto;height:76px;background:var(--card);border:1.5px solid var(--line);margin:0;border-radius:14px}
+.player video{position:absolute;inset:0;width:100%;height:100%;display:block;background:transparent;outline:none}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  background:rgba(5,8,15,.6);color:#E9EEF8;text-align:center;padding:16px;transition:opacity .25s}
+/* 淡出而不是瞬间消失；visibility 延迟切换，隐藏后里面的按钮不会被 Tab 到 */
+.overlay[hidden]{display:flex!important;opacity:0;pointer-events:none;visibility:hidden;transition:opacity .25s,visibility 0s .25s}
+.overlay .mascot{width:64px;height:64px;--ink:#8FB2F2;--mascot-fill:#141A28}
+.overlay .caption{font-size:14.5px;font-weight:600}
+.play-btn{width:72px;height:72px;border-radius:50%;background:#FFFFFF;color:#0B3F8F;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 10px 28px rgba(0,0,0,.35);transition:transform .15s var(--ease)}
+.play-btn:hover{transform:scale(1.06)}
+.play-btn:active{transform:scale(.96)}
+.play-btn svg{width:28px;height:28px;margin-left:4px}
+.play-btn:focus-visible{outline:3px solid #FFE27A;outline-offset:4px;border-radius:50%}
+.loading-dots{display:flex;gap:6px}
+.loading-dots i{width:8px;height:8px;border-radius:50%;background:#8FB2F2;animation:pu-scribble 1s infinite}
+.loading-dots i:nth-child(2){animation-delay:.15s}.loading-dots i:nth-child(3){animation-delay:.3s}
+.next-card{background:var(--card);color:var(--text);border-radius:18px;padding:16px 18px;max-width:340px;width:100%;text-align:left}
+.next-card small{font-size:12.5px;color:var(--text-3);font-weight:600}
+.next-card b{display:block;font-size:16px;line-height:1.35;margin-top:2px;word-break:break-word}
+.next-card .when{font-size:13.5px;color:var(--text-2);margin-top:6px}
+.next-card .row{display:flex;gap:10px;margin-top:12px}
+.next-card .row .btn{flex:1;min-height:40px}
 
-/* ── progress ── */
-#pct{font-size:38px;font-weight:750;text-align:center;letter-spacing:-1px;color:var(--blue-deep);
-  font-variant-numeric:tabular-nums;line-height:1.15}
-.bar{position:relative;height:8px;border-radius:99px;background:var(--surface-2);
-  border:1px solid var(--line);overflow:hidden;margin:16px 0 10px}
-#barFill{height:100%;width:0%;border-radius:99px;background:var(--blue);
-  transition:width .35s var(--ease-out)}
-.bar.indet::after{content:"";position:absolute;inset:0;width:38%;border-radius:99px;
-  background:linear-gradient(90deg,transparent,rgba(47,91,181,.35),transparent);
-  animation:sweep 1.3s ease-in-out infinite}
-@keyframes sweep{from{left:-40%}to{left:104%}}
-.bar.indet::after{left:-40%}
-.prog-hint{font-size:12.5px;color:var(--text-3);text-align:center}
+@media (max-width:480px){
+  .next-card{padding:11px 14px}
+  .next-card b{font-size:15px}
+  .next-card .when{margin-top:2px}
+  .next-card .row{margin-top:8px}
+  .next-card .row .btn{min-height:36px}
+}
+.info{padding-top:16px}
+.info .file-title{margin-top:0;font-size:19px}
+.subs{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
+.subs .label{font-size:13px;color:var(--text-3);margin-right:2px}
+.chip{border:1.5px solid var(--line);background:var(--card);color:var(--text-2);border-radius:999px;padding:5px 14px;font-size:13.5px;font-weight:600}
+.chip:hover{border-color:var(--ink)}
+.chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--on-ink)}
 
-/* ── player ── */
-#playerCard{padding:12px}
-.playerWrap{position:relative;border-radius:16px;overflow:hidden;background:#0f1626;
-  aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
-.playerWrap.audio{aspect-ratio:auto;height:72px}
-video{width:100%;height:100%;display:block;outline:none}
-.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(8,12,22,.55);transition:opacity .25s}
-.overlay.hidden{opacity:0;pointer-events:none}
-#loadingText{display:flex;align-items:center;gap:10px;font-size:13px;color:#c9d4e6;letter-spacing:1px}
-.spinner{width:16px;height:16px;border-radius:50%;flex:none;
-  border:2px solid rgba(201,212,230,.3);border-top-color:#c9d4e6;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion: reduce){ .spinner{animation-duration:1.6s} }
-#playBtn{display:flex;align-items:center;justify-content:center;width:68px;height:68px;border:0;cursor:pointer;
-  background:var(--blue);color:#fff;border-radius:50%;
-  box-shadow:0 10px 30px rgba(23,52,112,.45),inset 0 1px 0 rgba(255,255,255,.25);
-  transition:transform .15s var(--ease-out),background .2s,box-shadow .2s}
-#playBtn svg{width:24px;height:24px;margin-left:3px;fill:currentColor}
-#playBtn:hover{transform:scale(1.06);background:var(--blue-hover)}
-#playBtn:active{transform:scale(.97)}
-#playBtn:focus-visible{outline:3px solid var(--sky);outline-offset:3px}
-#subsRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
-#subsRow button{border:1px solid var(--line);background:var(--surface-2);color:var(--text-2);
-  border-radius:999px;padding:5px 15px;font-size:13px;cursor:pointer;font-family:inherit;
-  transition:background .15s,color .15s,border-color .15s}
-#subsRow button:hover{border-color:var(--line-strong);color:var(--text)}
-#subsRow button.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
-#subsRow button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.eps{margin-top:22px;border-top:1.5px solid var(--line);padding-top:16px}
+.eps .pos{font-size:13px;color:var(--text-3)}
+.eps .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.ep{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;min-height:62px;padding:9px 14px;
+  border:1.5px solid var(--line);border-radius:14px;background:var(--card);text-align:left}
+.ep:hover:not(:disabled){border-color:var(--ink)}
+.ep:disabled{opacity:.45;cursor:default}
+.ep.next{align-items:flex-end;text-align:right}
+.ep small{font-size:12px;font-weight:700;color:var(--ink)}
+.ep span{font-size:13.5px;color:var(--text);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switch{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:14px;color:var(--text-2);cursor:pointer;width:max-content;max-width:100%}
+.switch input{appearance:none;-webkit-appearance:none;width:40px;height:24px;border-radius:999px;background:var(--line);position:relative;flex:none;cursor:pointer;transition:background .2s}
+.switch input::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s var(--ease)}
+.switch input:checked{background:var(--ink)}
+.switch input:checked::after{transform:translateX(16px)}
 
-/* ── error ── */
-#errorCard{display:flex;gap:13px;align-items:flex-start;color:var(--red);
-  border-color:var(--red-line);background:var(--red-soft);box-shadow:none}
-#errorCard .err-ico{flex:none;display:flex;align-items:center;justify-content:center;
-  width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--red-line)}
-#errorCard .err-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
-#errorCard p{font-size:13.5px;line-height:1.7;padding-top:4px}
-
-/* ── footer：循环夸词 ── */
-.foot{margin-top:auto;text-align:center;font-size:11px;color:var(--text-3);
-  padding:6px 0 2px;letter-spacing:.3px}
-.foot span{display:inline-block;transition:opacity .32s ease,transform .32s ease}
-.foot span.swap{opacity:0;transform:translateY(4px)}
-@media (prefers-reduced-motion:reduce){.foot span{transition:none}}
+/* ── 出错 ── */
+.fail{min-height:calc(100svh - 56px - 120px);display:flex;flex-direction:column;justify-content:center;padding-bottom:8vh}
+.fail .mascot{width:112px;height:112px}
+.fail h1{font-size:22px;font-weight:750;margin-top:18px}
+.fail .why{margin-top:8px;font-size:14px;color:var(--bad);word-break:break-word}
+.fail .next-step{margin-top:12px;font-size:15px;color:var(--text)}
+@media (prefers-reduced-motion:reduce){.loading-dots i{animation:none}.overlay,.play-btn{transition:none}}
 </style>
 </head>
-<body>
-<header>
-  <img class="logo" src="/assets/pu-logo.png" alt="噗~">
-  <h1 id="title">噗~噗噗~~噗噗噗噗~~~~</h1>
-  <span class="pill" id="pill" aria-live="polite"><span class="dot"></span><span id="pillText">连接中</span></span>
-</header>
+<body data-state="loading">
+<div class="page" id="page">
+  <header class="topbar">
+    <a class="link-back" id="backLink" href="#" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span id="backText">全部</span></a>
+    <span class="grow"></span>
+    <button type="button" class="btn btn-quiet" id="shareBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="6" height="6" rx="1"/><rect x="14.5" y="3.5" width="6" height="6" rx="1"/><rect x="3.5" y="14.5" width="6" height="6" rx="1"/><path d="M14.5 14.5h2.5v2.5M20.5 14.5v.01M14.5 20.5h6v-3"/></svg>分享</button>
+  </header>
+  <div class="offline" id="offline" hidden>和电脑断开了，正在重连…</div>
+
+  <!-- 转码中：扫码后先看到的就是这里 -->
+  <section class="wait" id="wait" hidden>
+    <div class="wait-grid">
+      <div>
+        <div class="speaker">
+          <div class="mascot" id="waitMascot"></div>
+          <p class="bubble" id="waitBubble" aria-live="off"></p>
+        </div>
+        <h1 class="file-title" id="waitTitle">噗~噗噗~~噗噗噗噗~~~~</h1>
+        <div class="numbers">
+          <div class="pct"><span id="pct">0</span><small>%</small></div>
+          <div class="eta" id="eta">正在估算还要多久</div>
+        </div>
+        <div class="hatch" id="hatch" aria-label="转码进度"></div>
+        <p class="reassure">转好就能看，手机可以先放一边。</p>
+        <p class="plan" id="plan"></p>
+      </div>
+      <aside class="qr-aside" aria-label="扫码在手机上看">
+        <h2>在手机上看</h2>
+        <p>同一个 Wi-Fi 下扫一扫</p>
+        <div class="qr-box"><img id="asideQr" alt="当前页面的二维码"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 可以播了 -->
+  <section class="watch" id="watch" hidden>
+    <div class="player" id="player">
+      <video id="v" controls playsinline preload="auto"></video>
+      <div class="overlay" id="loadingOverlay" hidden><div class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></div><span class="caption">准备播放</span></div>
+      <div class="overlay" id="playOverlay" hidden>
+        <div class="mascot" id="readyMascot"></div>
+        <button type="button" class="play-btn" id="playBtn" aria-label="播放"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13c0 .9 1 1.5 1.8 1L20.4 13a1.2 1.2 0 0 0 0-2L9.8 4.5c-.8-.5-1.8.1-1.8 1z"/></svg></button>
+        <span class="caption" id="readyCaption">好啦，点一下就能看</span>
+      </div>
+      <div class="overlay" id="nextOverlay" hidden>
+        <div class="next-card" role="dialog" aria-labelledby="nextName">
+          <small>下一个</small>
+          <b id="nextName"></b>
+          <div class="when" id="nextWhen" aria-live="polite"></div>
+          <div class="row">
+            <button type="button" class="btn" id="nextCancel">取消</button>
+            <button type="button" class="btn btn-ink" id="nextNow">现在播放</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="info">
+      <h1 class="file-title" id="watchTitle">噗~噗噗~~噗噗噗噗~~~~</h1>
+      <div class="subs" id="subs" hidden><span class="label">字幕</span></div>
+      <nav class="eps" id="eps" hidden aria-label="同文件夹的其它视频">
+        <div class="pos" id="epPos"></div>
+        <div class="pair">
+          <button type="button" class="ep prev" id="prevBtn"><small>上一个</small><span id="prevName"></span></button>
+          <button type="button" class="ep next" id="nextBtn"><small>下一个</small><span id="nextBtnName"></span></button>
+        </div>
+        <label class="switch"><input type="checkbox" id="autoNext">播完自动放下一个</label>
+      </nav>
+    </div>
+  </section>
+
+  <!-- 出错 / 链接失效 -->
+  <section class="fail" id="fail" hidden>
+    <div class="mascot" id="failMascot"></div>
+    <h1 id="failTitle">这个视频放不了</h1>
+    <p class="why" id="failWhy"></p>
+    <p class="next-step" id="failNext">回到电脑上，重新右键这个视频再试一次。</p>
+  </section>
+
+  <footer class="brand-foot">噗~噗噗~~噗噗噗噗~~~~</footer>
+</div>
 
 <script src="/assets/hls.min.js"></script>
-
-<!-- 扫码入口：转码期间一直可见 -->
-<section class="card stage" id="qrCard">
-  <div class="qr-frame">
-    <img id="qr" alt="手机扫码打开的二维码">
-    <i class="corner tl" aria-hidden="true"></i><i class="corner tr" aria-hidden="true"></i>
-    <i class="corner bl" aria-hidden="true"></i><i class="corner br" aria-hidden="true"></i>
-  </div>
-  <div class="qr-hint">手机或平板扫一扫 · 同一 Wi-Fi</div>
-  <div class="url" id="urlText" tabindex="0"></div>
-  <div id="planText"></div>
-</section>
-
-<section class="card stage hidden" id="progressCard">
-  <div id="pct">0%</div>
-  <div class="bar indet" id="bar"><div id="barFill"></div></div>
-  <div class="prog-hint" id="progHint">正在准备…</div>
-</section>
-
-<section class="card stage hidden" id="playerCard">
-  <div class="playerWrap">
-    <video id="v" controls playsinline preload="auto"></video>
-    <div class="overlay hidden" id="loadingOverlay"><span id="loadingText"><span class="spinner" aria-hidden="true"></span>准备播放…</span></div>
-    <div class="overlay hidden" id="playOverlay"><button id="playBtn" aria-label="播放"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13c0 .9 1 1.5 1.8 1L20.4 13a1.2 1.2 0 0 0 0-2L9.8 4.5c-.8-.5-1.8.1-1.8 1z"/></svg></button></div>
-  </div>
-  <div id="subsRow"></div>
-</section>
-
-<section class="card stage hidden" id="errorCard">
-  <span class="err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg></span>
-  <p id="errorText">处理失败。</p>
-</section>
-
+<script src="/assets/pu.js"></script>
 <script>
 (function(){
   var token = location.pathname.split('/')[2];
-  if (!token) { document.body.innerHTML = '<p style="padding:40px;text-align:center">链接无效</p>'; return; }
-  var $ = function(id){ return document.getElementById(id); };
-  var title=$('title'), pill=$('pill'), pillText=$('pillText'), planText=$('planText'),
-      qrCard=$('qrCard'), progressCard=$('progressCard'), playerCard=$('playerCard'),
-      errorCard=$('errorCard'), errorText=$('errorText'),
-      pct=$('pct'), bar=$('bar'), barFill=$('barFill'), progHint=$('progHint'),
-      video=$('v'), subsRow=$('subsRow'),
-      playerWrap=$('playerWrap'),
-      loadingOverlay=$('loadingOverlay'), playOverlay=$('playOverlay'),
-      playBtn=$('playBtn'), urlText=$('urlText');
+  if (!token){ document.body.innerHTML = '<p style="padding:40px;text-align:center">链接无效</p>'; return; }
+  var $ = Pu.$, dev = Pu.device();
+  var video = $('v'), player = $('player'), hatch = Pu.hatch($('hatch'));
+  var waitM = Pu.mascot($('waitMascot'), 'busy'), readyM = Pu.mascot($('readyMascot'), 'ready'), failM = Pu.mascot($('failMascot'), 'error');
+  var waitBubble = Pu.bubble($('waitBubble'));
+  var words = { busy: ['嘿咻嘿咻，使劲中'], ready: ['好啦，点一下就能看'], praise: [] };
+  Pu.words().then(function(w){ words = w; words.praiseLines = Pu.praise(w); }).catch(function(){});
 
-  urlText.textContent = location.href;
-  qr.src = '/s/' + token + '/qr.png?u=' + encodeURIComponent(location.href);
+  var st = null;          // 最近一次状态
+  var hls = null;         // hls.js 实例（换源时销毁）
+  var started = false;    // 当前 token 的播放器是否已初始化（hls.js 路径不给 video.src 赋值，单独标记）
+  var lastSubKey = '';    // 字幕列表指纹：字幕后补时列表变化才重建 DOM
+  var subLabel = Pu.store.get('pu:sub') || '';  // 用户选的字幕（按名字记，换下一集也沿用）
+  var eta = Pu.etaEstimator();
+  var link = null;        // 所属文件夹（上一个 / 下一个）
+  var nextToken = null, prefetched = false;
+  var nextTimer = null, nextPoll = null;
+  var autoNext = $('autoNext');
+  autoNext.checked = Pu.store.get('pu:autonext') !== '0';
+  autoNext.addEventListener('change', function(){ Pu.store.set('pu:autonext', autoNext.checked ? '1' : '0'); });
 
-  var timer = null;
-  var pollMs = 0;       // 当前轮询周期（0 = 停止）：换档用，避免反复重建计时器
-  var hlsStarted = false; // hls.js（MSE）路径不会给 video.src 赋值，需要单独标记防重复初始化
-  var lastSubKey = '';    // 字幕列表指纹：直出/复用命中时字幕后补，列表变化才重建 DOM
-  var selectedSub = -1;   // 用户当前选中的字幕：重建 DOM 后恢复（字幕后补时选择不能丢）
+  var share = Pu.shareSheet(function(u){ return '/s/' + token + '/qr.png?u=' + encodeURIComponent(u); },
+                            function(){ return location.href; });
+  $('shareBtn').addEventListener('click', share.open);
 
-  // 轮询节奏：转码中 800ms；字幕后补 2s；已定案 30s 心跳——页面开着时服务端把心跳算作
-  // 最近传输时刻（LRU/Job 上限保护），暂停播放后恢复不 404；心跳不续空闲退出，不影响自动退出
-  function keepPolling(ms){
-    if (pollMs === ms) return;
-    if (timer !== null){ clearInterval(timer); timer = null; }
-    pollMs = ms;
-    if (ms > 0) timer = setInterval(tick, ms);
+  function show(id){ ['wait', 'watch', 'fail'].forEach(function(x){ $(x).hidden = x !== id; }); }
+  function resumeKey(){ return 'pu:pos:' + (st ? st.title : ''); }
+
+  var poll = Pu.poller(tick);
+  function tick(){
+    var t = token;
+    fetch('/s/' + t + '/status?d=' + dev, { cache: 'no-store' })
+      .then(function(r){
+        if (r.status === 404) return { state: 'gone' };
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(s){ if (t !== token) return; $('offline').hidden = true; render(s); })
+      .catch(function(){ if (t === token) $('offline').hidden = false; });
   }
 
-  function show(el){ el.classList.remove('hidden'); }
-  function hide(el){ el.classList.add('hidden'); }
-  function setPill(t, cls){ pillText.textContent = t; pill.className = 'pill' + (cls ? ' ' + cls : ''); }
+  function render(s){
+    st = s;
+    document.body.dataset.state = s.state; // 调试 / 端到端测试钩子
+    var title = s.title || '噗~噗噗~~噗噗噗噗~~~~';
+    $('waitTitle').textContent = $('watchTitle').textContent = title;
+    link = s.folder || null;
+    renderBack();
 
-  function render(st){
-    document.body.dataset.state = st.state; // 调试/测试钩子
-    title.textContent = st.title || '噗~噗噗~~噗噗噗噗~~~~';
-    document.title = (st.title || '噗~噗噗~~噗噗噗噗~~~~') + ' · 噗~噗噗~~噗噗噗噗~~~~';
-    planText.textContent = st.plan || '';
-
-    if (st.state === 'transcoding'){
-      // 二维码与进度并存：先扫码，边等边看进度
-      setPill('转码中', 'busy');
-      show(qrCard); show(progressCard); hide(playerCard); hide(errorCard);
-      var p = Math.round((st.progress || 0) * 100);
-      barFill.style.width = p + '%';
-      bar.classList.toggle('indet', p < 2);
-      pct.textContent = p + '%';
-      progHint.textContent = st.plan || '正在转码…';
-      keepPolling(800);
-    } else if (st.state === 'serving'){
-      setPill('就绪', 'ok');
-      hide(qrCard); hide(progressCard); hide(errorCard); show(playerCard);
-      if (!video.src && !hlsStarted){
-        hlsStarted = true;
-        var isAudio = st.hasVideo === false; // 纯音频（mp3/m4a…）：video 元素自带控件即可，收窄黑框、不弹大播放键
-        var url = st.hls
-          ? '/s/' + token + '/hls/index.m3u8'
-          : '/s/' + token + '/media';
-        var stopLoading = function(){ hide(loadingOverlay); };
-        var failPlay = function(){ hide(loadingOverlay); setPill('播放失败', 'bad'); };
-        var playIt = function(){ video.play().catch(function(){ hide(loadingOverlay); if (!isAudio) show(playOverlay); }); };
-        if (isAudio){
-          playerWrap.classList.add('audio');
-          hide(playOverlay);
-          video.src = url;
-          video.addEventListener('canplay', stopLoading, { once:true });
-          video.addEventListener('loadeddata', stopLoading, { once:true }); // 有的移动端只发这个
-          video.addEventListener('error', failPlay);
-          playIt();
-        } else if (st.hls && window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')){
-          // HLS：hls.js（MSE）
-          var hls = new Hls();
-          hls.loadSource(url);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.ERROR, function(evt, data){
-            if (data && data.fatal){
-              hide(loadingOverlay);
-              setPill('播放失败', 'bad');
-            }
-          });
-          hls.on(Hls.Events.MANIFEST_PARSED, playIt);
-          video.addEventListener('canplay', stopLoading, { once:true });
-          video.addEventListener('loadeddata', stopLoading, { once:true });
-        } else {
-          // 直出 MP4 / Safari 原生 HLS
-          video.src = url;
-          video.addEventListener('canplay', stopLoading, { once:true });
-          video.addEventListener('loadeddata', stopLoading, { once:true }); // 有的移动端只发这个
-          video.addEventListener('error', failPlay);
-          playIt();
-        }
-        // 兜底：8 秒还没起播条件就亮播放键（纯音频只收遮罩，不弹大按钮），让用户自己点
-        setTimeout(function(){
-          if (video.readyState < 2 && !video.error
-              && !loadingOverlay.classList.contains('hidden')){
-            hide(loadingOverlay);
-            if (!isAudio) show(playOverlay);
-          }
-        }, 8000);
-      }
-      // 字幕可能比视频晚就绪（直出/复用命中：后台抽，抽完补发）：
-      // 列表变化才重建（幂等，含清旧 track）；字幕未定案前保持慢轮询，定案后停
-      var subKey = JSON.stringify(st.subtitles || []);
-      if (subKey !== lastSubKey){ lastSubKey = subKey; buildSubs(st.subtitles || []); }
-      keepPolling(st.subsPending ? 2000 : 30000); // 已定案：慢心跳保 LRU/上限保护，不续空闲
+    if (s.state === 'transcoding'){
+      document.title = Math.round((s.progress || 0) * 100) + '% ' + title;
+      show('wait');
+      $('page').classList.add('wide');
+      var p = s.progress || 0;
+      $('pct').textContent = Math.round(p * 100);
+      hatch.set(p < 0.01 ? null : p);
+      $('eta').textContent = Pu.fmtEta(p < 0.01 ? null : eta(p));
+      $('plan').textContent = s.plan || '';
+      if (!$('asideQr').src) $('asideQr').src = '/s/' + token + '/qr.png?u=' + encodeURIComponent(location.href);
+      waitBubble.say(words.busy, 3200);
+      poll.every(800);
+    } else if (s.state === 'serving'){
+      document.title = title;
+      show('watch');
+      $('page').classList.add('wide'); // 宽屏上视频尽量大；手机上 wide 不生效
+      waitBubble.hide();
+      if (!started) startPlayer(s);
+      var key = JSON.stringify(s.subtitles || []);
+      if (key !== lastSubKey){ lastSubKey = key; buildSubs(s.subtitles || []); }
+      renderEpisodes();
+      // 字幕后补中 2s；定案后 30s 慢心跳（服务端据此保护产物不被 LRU 淘汰，不续空闲退出）
+      poll.every(s.subsPending ? 2000 : 30000);
     } else {
-      setPill('失败', 'bad');
-      hide(qrCard); hide(progressCard); hide(playerCard); show(errorCard);
-      errorText.textContent = '处理失败：' + (st.error || '未知错误');
-      keepPolling(0);
+      show('fail');
+      $('page').classList.remove('wide');
+      waitBubble.hide();
+      if (s.state === 'gone'){
+        document.title = '链接失效了';
+        $('failTitle').textContent = '这个链接已经失效了';
+        $('failWhy').textContent = '';
+        $('failNext').textContent = '电脑上的噗噗可能已经退出。回到电脑上重新右键这个视频，扫新的二维码。';
+      } else {
+        document.title = '放不了 ' + title;
+        $('failTitle').textContent = '这个视频放不了';
+        $('failWhy').textContent = s.error || '';
+        $('failNext').textContent = '回到电脑上，重新右键这个视频再试一次。';
+      }
+      poll.every(0);
     }
   }
 
+  function renderBack(){
+    var b = $('backLink');
+    if (!link){ b.hidden = true; return; }
+    b.hidden = false;
+    b.href = '/f/' + link.token;
+    $('backText').textContent = link.title || '全部';
+  }
+
+  // ── 播放器 ──
+  function startPlayer(s){
+    started = true;
+    var isAudio = s.hasVideo === false; // 纯音频：收窄播放器，不弹大播放键
+    var url = s.hls ? '/s/' + token + '/hls/index.m3u8' : '/s/' + token + '/media';
+    player.classList.toggle('audio', isAudio);
+    $('loadingOverlay').hidden = isAudio;
+    $('playOverlay').hidden = true;
+    var stopLoading = function(){ $('loadingOverlay').hidden = true; };
+    var failPlay = function(){ stopLoading(); Pu.toast('播放出错了，刷新页面试试'); };
+    var playIt = function(){
+      var p = video.play();
+      if (p && p.catch) p.catch(function(){ stopLoading(); if (!isAudio) askToPlay(); });
+    };
+    video.addEventListener('canplay', stopLoading, { once: true });
+    video.addEventListener('loadeddata', stopLoading, { once: true }); // 有的移动端只发这个
+    video.addEventListener('loadedmetadata', restorePosition, { once: true });
+    if (!isAudio && s.hls && window.Hls && !video.canPlayType('application/vnd.apple.mpegurl')){
+      // HLS：hls.js（MSE）；Safari 走下面的原生分支
+      hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, function(evt, data){ if (data && data.fatal) failPlay(); });
+      hls.on(Hls.Events.MANIFEST_PARSED, playIt);
+    } else {
+      video.src = url;
+      video.addEventListener('error', failPlay, { once: true });
+      playIt();
+    }
+    // 兜底：8 秒还没起播就亮播放键，让用户自己点
+    var mine = token;
+    setTimeout(function(){
+      if (mine !== token) return;
+      if (video.readyState < 2 && !video.error && !$('loadingOverlay').hidden){
+        stopLoading();
+        if (!isAudio) askToPlay();
+      }
+    }, 8000);
+  }
+
+  function askToPlay(){
+    var lines = words.praiseLines && words.praiseLines.length ? words.praiseLines : words.ready;
+    $('readyCaption').textContent = lines[Math.floor(Math.random() * lines.length)];
+    $('playOverlay').hidden = false;
+  }
+  $('playBtn').addEventListener('click', function(){
+    $('playOverlay').hidden = true;
+    var p = video.play(); if (p && p.catch) p.catch(function(){});
+  });
+
+  // ── 字幕：「关」+ 每条字幕一个按钮；按名字记住选择，字幕后补重建和换下一集都沿用 ──
   function buildSubs(list){
-    subsRow.innerHTML = '';
-    // 清掉旧 <track>：字幕后补时可能重建多次，不清会重复挂字幕
-    while (video.firstChild) video.removeChild(video.firstChild);
+    var row = $('subs');
+    while (row.children.length > 1) row.removeChild(row.lastChild);
+    while (video.firstChild) video.removeChild(video.firstChild); // 清旧 <track>，后补重建不重复挂
+    var labels = [];
     list.forEach(function(s, i){
       var t = document.createElement('track');
       t.kind = 'subtitles';
@@ -325,55 +352,143 @@ video{width:100%;height:100%;display:block;outline:none}
       t.src = '/s/' + token + '/sub/' + s.index;
       t.mode = 'disabled';
       video.appendChild(t);
-      var b = document.createElement('button');
-      b.textContent = t.label;
-      b.addEventListener('click', function(){ selectSub(i); });
-      subsRow.appendChild(b);
+      labels.push(t.label);
     });
-    subsRow.style.display = list.length ? '' : 'none';
-    // 恢复用户之前选中的字幕（字幕后补重建 DOM 时选择不丢失；
-    // 新列表里没有该项则取消选择）
-    if (selectedSub >= 0 && selectedSub < list.length) selectSub(selectedSub);
-    else selectedSub = -1;
+    row.hidden = list.length === 0;
+    ['关'].concat(labels).forEach(function(label, i){
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'chip'; b.textContent = label;
+      b.addEventListener('click', function(){ selectSub(i - 1, true); });
+      row.appendChild(b);
+    });
+    var want = labels.indexOf(subLabel);
+    selectSub(want, false);
   }
-
-  function selectSub(i){
-    selectedSub = i;
+  var wantSub = -1;
+  function selectSub(i, remember){
+    wantSub = i;
+    enforceSub();
+    var chips = $('subs').querySelectorAll('.chip');
+    for (var k = 0; k < chips.length; k++) chips[k].setAttribute('aria-pressed', String(k === i + 1));
+    if (remember){ subLabel = i >= 0 ? video.textTracks[i].label : ''; Pu.store.set('pu:sub', subLabel); }
+  }
+  // 浏览器插入 <track> 后会异步做一次「按系统语言自动选字幕」，把刚设好的状态盖掉
+  // （换下一集后出现两行字幕）。监听 change 把状态拉回用户的选择；只改不一致的，不会来回触发
+  function enforceSub(){
     var tracks = video.textTracks;
-    for (var j = 0; j < tracks.length; j++) tracks[j].mode = (j === i) ? 'showing' : 'disabled';
-    Array.prototype.forEach.call(subsRow.children, function(b, j){ b.classList.toggle('on', j === i); });
+    for (var j = 0; j < tracks.length; j++){
+      var mode = j === wantSub ? 'showing' : 'disabled';
+      if (tracks[j].mode !== mode) tracks[j].mode = mode;
+    }
   }
+  if (video.textTracks && video.textTracks.addEventListener) video.textTracks.addEventListener('change', enforceSub);
 
-  playBtn.addEventListener('click', function(){
-    hide(playOverlay);
-    video.play().catch(function(){});
+  // ── 断点续播：按文件名记位置（token 每次启动都会变，文件名不会） ──
+  var lastSave = 0;
+  function restorePosition(){
+    var saved = parseFloat(Pu.store.get(resumeKey()) || '0');
+    // 看过 15 秒以上、还没到最后 5%（片尾字幕阶段）才续播；否则从头开始
+    if (saved >= 15 && video.duration && saved < video.duration * 0.95){
+      video.currentTime = saved;
+      Pu.toast('从 ' + Pu.fmtTime(saved) + ' 接着看', { label: '从头看', run: function(){ video.currentTime = 0; } }, 6000);
+    }
+    if (link) Pu.store.set('pu:last:' + link.title, st.title);
+  }
+  video.addEventListener('timeupdate', function(){
+    var now = Date.now();
+    if (now - lastSave > 5000 && video.currentTime > 5){ lastSave = now; Pu.store.set(resumeKey(), String(video.currentTime)); }
+    // 看到一半就悄悄把下一个转起来：播完时多半已经转好，连播不用等
+    if (!prefetched && autoNext.checked && link && link.next && video.duration && video.currentTime / video.duration >= 0.5){
+      prefetched = true;
+      openFile(link.next.index).then(function(t){ nextToken = t; }).catch(function(){ prefetched = false; });
+    }
+  });
+  video.addEventListener('pause', function(){ if (video.currentTime > 5) Pu.store.set(resumeKey(), String(video.currentTime)); });
+  video.addEventListener('ended', function(){
+    Pu.store.del(resumeKey());
+    Pu.store.set('pu:done:' + st.title, '1');
+    if (autoNext.checked && link && link.next) offerNext();
   });
 
-  function tick(){
-    fetch('/s/' + token + '/status', { cache:'no-store' })
-      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(render)
-      .catch(function(){ setPill('连接中断', ''); });
+  // ── 上一个 / 下一个 ──
+  function renderEpisodes(){
+    var nav = $('eps');
+    if (!link || link.count < 2){ nav.hidden = true; return; }
+    nav.hidden = false;
+    $('epPos').textContent = '文件夹里的第 ' + (link.position + 1) + ' 个，共 ' + link.count + ' 个';
+    $('prevBtn').disabled = !link.prev;
+    $('prevName').textContent = link.prev ? stripExt(link.prev.name) : '已经是第一个';
+    $('nextBtn').disabled = !link.next;
+    $('nextBtnName').textContent = link.next ? stripExt(link.next.name) : '已经是最后一个';
   }
+  function stripExt(n){ return n.replace(/\.[^.]+$/, ''); }
+  function openFile(index){
+    return fetch('/f/' + link.token + '/open/' + index, { method: 'POST' })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(d){ return d.url.split('/s/')[1]; });
+  }
+  function jump(item){
+    if (!item) return;
+    var reuse = link.next && item.index === link.next.index ? nextToken : null;
+    (reuse ? Promise.resolve(reuse) : openFile(item.index))
+      .then(switchTo)
+      .catch(function(){ Pu.toast('没能打开，稍后再试'); });
+  }
+  $('prevBtn').addEventListener('click', function(){ jump(link && link.prev); });
+  $('nextBtn').addEventListener('click', function(){ jump(link && link.next); });
+
+  // 播完：5 秒倒数后在同一个 <video> 上换源。不能跳转新页面——iOS 不允许新页面自动带声播放
+  function offerNext(){
+    var item = link.next, left = 5;
+    $('nextName').textContent = stripExt(item.name);
+    $('nextOverlay').hidden = false;
+    $('nextNow').focus();
+    var ready = false;
+    function update(){
+      $('nextWhen').textContent = !nextToken || !ready
+        ? (nextProgress === null ? '正在准备' : '正在准备 ' + nextProgress + '%')
+        : left > 0 ? left + ' 秒后开始' : '马上开始';
+    }
+    var nextProgress = null;
+    function check(){
+      if (!nextToken){ openFile(item.index).then(function(t){ nextToken = t; check(); }).catch(function(){}); return; }
+      fetch('/s/' + nextToken + '/status?d=' + dev, { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(s){
+        ready = s.state === 'serving';
+        nextProgress = s.state === 'transcoding' ? Math.round((s.progress || 0) * 100) : null;
+        if (s.state === 'failed'){ cancelNext(); Pu.toast('下一个放不了：' + (s.error || '处理失败')); return; }
+        update();
+        if (ready && left <= 0) goNext();
+      }).catch(function(){});
+    }
+    update(); check();
+    nextPoll = setInterval(check, 1000);
+    nextTimer = setInterval(function(){ left--; update(); if (left <= 0 && ready) goNext(); }, 1000);
+  }
+  function cancelNext(){
+    clearInterval(nextTimer); clearInterval(nextPoll); nextTimer = nextPoll = null;
+    $('nextOverlay').hidden = true;
+  }
+  function goNext(){ var t = nextToken; cancelNext(); if (t) switchTo(t); }
+  $('nextCancel').addEventListener('click', cancelNext);
+  $('nextNow').addEventListener('click', function(){ if (nextToken) goNext(); else jump(link.next); });
+
+  // 原地换源：销毁旧播放器、清字幕，换 token 后按新状态重新渲染。地址栏同步成新链接（刷新 / 分享都对）
+  function switchTo(t){
+    cancelNext();
+    if (hls){ hls.destroy(); hls = null; }
+    video.pause();
+    while (video.firstChild) video.removeChild(video.firstChild);
+    video.removeAttribute('src');
+    video.load();
+    started = false; lastSubKey = ''; prefetched = false; nextToken = null; lastSave = 0;
+    eta = Pu.etaEstimator();
+    token = t;
+    history.replaceState(null, '', '/s/' + t);
+    window.scrollTo(0, 0);
+    tick();
+  }
+
   tick();
-})();
-</script>
-<footer class="foot"><span id="queen">全世界最可爱的噗噗大王~</span></footer>
-<script>
-(function(){
-  var words = ['全世界最可爱','无敌漂亮','闪闪发光','人见人爱','笑起来超甜','元气满满','聪明伶俐','宇宙第一美少女'];
-  var el = document.getElementById('queen');
-  var reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var i = 0;
-  setInterval(function(){
-    i = (i + 1) % words.length;
-    if (reduced) { el.textContent = words[i] + '的噗噗大王~'; return; }
-    el.classList.add('swap');
-    setTimeout(function(){
-      el.textContent = words[i] + '的噗噗大王~';
-      el.classList.remove('swap');
-    }, 320);
-  }, 2800);
 })();
 </script>
 </body>
