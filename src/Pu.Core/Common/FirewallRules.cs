@@ -12,10 +12,12 @@ public enum FwProfile
 
 /// <summary>一条防火墙规则里判定需要的字段（Pu.App 从 HNetCfg.FwPolicy2 读出来填进来）。
 /// Protocol：6 = TCP，17 = UDP，256 = 任意。LocalPorts：null/"*" = 任意端口，否则 "8000,8010-8020"。
-/// Service：非空表示只作用于某个 Windows 服务，与本程序无关。</summary>
+/// Service：非空表示只作用于某个 Windows 服务，与本程序无关。
+/// RemoteAddresses：null/"*" = 任意来源。Scoped：规则另有归属（UWP 应用包 / 所有者用户 SID），只对那个应用生效。</summary>
 public sealed record FwRule(
     string? Application, bool Inbound, bool Allow, bool Enabled,
-    FwProfile Profiles, int Protocol, string? LocalPorts = null, string? Service = null);
+    FwProfile Profiles, int Protocol, string? LocalPorts = null, string? Service = null,
+    string? RemoteAddresses = null, bool Scoped = false);
 
 /// <summary>某个网络类型的防火墙总开关与默认入站策略。</summary>
 public sealed record FwProfileState(FwProfile Profile, bool Enabled, bool DefaultInboundBlock, bool BlockAllInbound);
@@ -64,10 +66,18 @@ public static class FirewallRules
             var anyApp = string.IsNullOrEmpty(r.Application) || r.Application == "*";
             if (anyApp)
             {
-                // 不限程序的规则：只认端口明确写了本端口的。「不限程序也不限端口」的规则几乎都另有
-                // COM 读不到的限定——Store / Game Bar 等 UWP 规则靠应用包限定，加速器的 UPnP 规则限定了
-                // 组播地址——当成放行会把「一条放行规则都没有」误判成放行（实测踩过），当成拦截又会误报
-                if (IsAnyPort(r.LocalPorts) || !PortMatches(r.LocalPorts, port)) continue;
+                // 不限程序的规则：端口明确写了本端口的算数；「不限程序也不限端口」的只认真正的全放行/全拦截——
+                // 带归属（Store / Game Bar 等 UWP 规则靠应用包、所有者 SID 限定）或限定了来源地址
+                // （加速器的 UPnP 规则只放组播地址）的都不作用于本程序。两类都实测踩过：
+                // 一律当成放行会把「没有放行」误判成放行；一律忽略又漏掉真正的全放行规则（手机连上了却还报警）
+                if (IsAnyPort(r.LocalPorts))
+                {
+                    if (r.Scoped || !IsAnyAddress(r.RemoteAddresses)) continue;
+                }
+                else if (!PortMatches(r.LocalPorts, port))
+                {
+                    continue;
+                }
             }
             else
             {
@@ -83,6 +93,9 @@ public static class FirewallRules
 
     private static bool IsAnyPort(string? ports)
         => string.IsNullOrWhiteSpace(ports) || ports.Trim() == "*";
+
+    private static bool IsAnyAddress(string? addresses)
+        => string.IsNullOrWhiteSpace(addresses) || addresses.Trim() == "*";
 
     /// <summary>"8000"、"8000-8031"、"80,443,8000-8031"、"*"；看不懂的写法（如 RPC、IPHTTPS 这类关键字）不匹配。</summary>
     internal static bool PortMatches(string? ports, int port)

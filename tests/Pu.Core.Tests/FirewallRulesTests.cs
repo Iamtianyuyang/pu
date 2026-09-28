@@ -22,8 +22,9 @@ public class FirewallRulesTests
         => FirewallRules.Evaluate(Exe, Port, active, states, rules);
 
     private static FwRule Rule(string? app, bool allow, FwProfile profiles = FwProfile.Public,
-        int protocol = 6, bool inbound = true, bool enabled = true, string? ports = null, string? service = null)
-        => new(app, inbound, allow, enabled, profiles, protocol, ports, service);
+        int protocol = 6, bool inbound = true, bool enabled = true, string? ports = null, string? service = null,
+        string? remote = null, bool scoped = false)
+        => new(app, inbound, allow, enabled, profiles, protocol, ports, service, remote, scoped);
 
     [Fact]
     public void 公用网络_没有任何规则_默认拦截_判为未放行()
@@ -89,14 +90,26 @@ public class FirewallRulesTests
         => Assert.Equal(FwVerdict.NotAllowed, Eval(Rule(Exe, allow: true, service: "Spooler")));
 
     [Fact]
-    public void 通配程序通配端口的拦截规则_不据此报警()
-        => Assert.Equal(FwVerdict.Allowed, Eval(Rule(Exe, allow: true), Rule(null, allow: false)));
+    public void 带归属的通配拦截规则_不据此报警()
+        => Assert.Equal(FwVerdict.Allowed, Eval(Rule(Exe, allow: true), Rule(null, allow: false, protocol: 256, scoped: true)));
 
     [Fact]
-    public void 通配程序通配端口的放行规则_不算放行()
-        // Store / Game Bar 等 UWP 规则：程序和端口都空（靠应用包限定，COM 读不到）；
-        // 实测这类规则把「没有任何放行」误判成放行
-        => Assert.Equal(FwVerdict.NotAllowed, Eval(Rule(null, allow: true, protocol: 256), Rule("*", allow: true)));
+    public void 不带任何限定的全拦截规则_判为被拦()
+        => Assert.Equal(FwVerdict.BlockedByRule, Eval(Rule(Exe, allow: true), Rule(null, allow: false, protocol: 256)));
+
+    [Fact]
+    public void 带归属或限定来源的通配放行规则_不算放行()
+        // Store / Game Bar 等 UWP 规则：程序和端口都空，靠应用包 / 所有者 SID 限定；
+        // 加速器的 UPnP 规则只放组播地址。实测这类规则曾把「没有任何放行」误判成放行
+        => Assert.Equal(FwVerdict.NotAllowed, Eval(
+            Rule(null, allow: true, protocol: 256, scoped: true),
+            Rule("*", allow: true, protocol: 256, scoped: true),
+            Rule(null, allow: true, protocol: 256, remote: "239.255.255.254/255.255.255.255")));
+
+    [Fact]
+    public void 不带任何限定的全放行规则_算放行()
+        // 实机：一条「WindowsPerf-In」规则不限程序/端口/协议/来源、无归属——手机确实连得上，不该再报警
+        => Assert.Equal(FwVerdict.Allowed, Eval(Rule(null, allow: true, protocol: 256, remote: "*")));
 
     [Fact]
     public void 限定了本程序但端口不对_不算放行()
