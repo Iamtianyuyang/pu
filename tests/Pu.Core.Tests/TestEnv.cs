@@ -27,7 +27,9 @@ public static class TestEnv
     {
         try
         {
-            return ProcessRunner.RunAsync("cmd.exe", args).GetAwaiter().GetResult();
+            var list = new List<string> { "/c" };
+            list.AddRange(args);
+            return ProcessRunner.RunAsync("cmd.exe", list, timeout: TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
         }
         catch
         {

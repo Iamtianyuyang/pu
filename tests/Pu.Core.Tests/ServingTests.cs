@@ -162,6 +162,7 @@ public class ServingTests
     [Fact]
     public async Task 超过Job上限_淘汰最老的已定案job()
     {
+        if (!TestEnv.HasFfmpeg) return;
         using var dir = new TempDir();
         var sample = await MakeVideo(dir.Path, "cap.mp4",
             ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]);
